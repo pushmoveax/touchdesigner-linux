@@ -15,7 +15,15 @@ else
 	C_RED=''; C_GREEN=''; C_YELLOW=''; C_BLUE=''
 fi
 
-die() { printf '%std-linux: error:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+# Shorten $HOME to ~ for display. Paths stay copy-pasteable, because the shell
+# expands ~ to the same thing, and output stops being dominated by one prefix.
+td_tilde() {
+	local text="$*"
+	[[ -n "${HOME:-}" && ${#HOME} -gt 1 ]] && text="${text//$HOME/\~}"
+	printf '%s' "$text"
+}
+
+die() { printf '%std-linux: error:%s %s\n' "$C_RED" "$C_RESET" "$(td_tilde "$*")" >&2; exit 1; }
 warn_msg() { printf '%std-linux: warning:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
 
 # ------------------------------------------------------------ bottles ----

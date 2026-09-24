@@ -101,9 +101,13 @@ if command -v wrestool >/dev/null 2>&1 && command -v icotool >/dev/null 2>&1; th
 	if [[ -n "$exe" && -f "$exe" ]]; then
 		tmp=$(mktemp -d)
 		trap 'rm -rf "$tmp"' EXIT
-		if wrestool -x -t 14 -o "$tmp" "$exe" >/dev/null 2>&1 \
-			&& ico=$(find "$tmp" -name '*.ico' -print -quit) \
-			&& [[ -n "$ico" ]]; then
+		# Resource 101 is the application icon by Windows convention; the other
+		# groups in TouchDesigner.exe are .toe/.tox document icons, which look
+		# wrong in an application menu.
+		wrestool -x -t 14 -n 101 -o "$tmp/app.ico" "$exe" >/dev/null 2>&1
+		ico="$tmp/app.ico"
+		[[ -s "$ico" ]] || ico=$(find "$tmp" -name '*.ico' -print -quit)
+		if [[ -n "$ico" && -s "$ico" ]]; then
 			mkdir -p "$ICON_DIR"
 			# Largest frame in the .ico is the one worth keeping.
 			if icotool -x -o "$tmp" "$ico" >/dev/null 2>&1; then

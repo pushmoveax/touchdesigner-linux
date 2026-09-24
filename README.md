@@ -1,8 +1,26 @@
+<div align="center">
+
+<img src="docs/assets/header.png" alt="" width="300">
+
 # TouchDesigner on Linux
 
-Install TouchDesigner on Linux from nothing, and make it actually start.
+**Install TouchDesigner on Linux from nothing, and make it actually start.**
 
-*[Русская версия](README.ru.md)*
+![license](https://img.shields.io/badge/license-MIT-blue)
+![platform](https://img.shields.io/badge/platform-Linux-informational)
+![via](https://img.shields.io/badge/via-Bottles%20%2B%20Wine-a0522d)
+
+English · [Русский](README.ru.md)
+
+</div>
+
+![TouchDesigner 2025.33070 running on EndeavourOS](docs/assets/touchdesigner-on-linux.jpg)
+
+<div align="center"><sub>
+
+TouchDesigner 2025.33070 · EndeavourOS · KDE Plasma 6.6.5 on Wayland · RTX 2080 Ti · Bottles + Wine
+
+</sub></div>
 
 TouchDesigner has no Linux build. It runs well through Wine — once you get past
 the part where it installs fine, launches, and then freezes on the splash screen
@@ -37,6 +55,8 @@ the plan without touching anything:
 ```sh
 td-setup --dry-run
 ```
+
+![td-setup --dry-run](docs/assets/td-setup.png)
 
 Then:
 
@@ -100,48 +120,7 @@ td-doctor --log        # why did the last run die?
 runner, DXVK, TouchDesigner build and the DLLs known to break, then prints the
 exact command for each problem it finds. Nothing changes unless you run it.
 
-<details>
-<summary>Example td-doctor run</summary>
-
-```
-TouchDesigner Linux Doctor 0.1.0
-
-System
-  Distro           EndeavourOS
-  Kernel           7.0.9-arch2-1
-  Desktop          KDE
-  Session          wayland
-  GPU              NVIDIA GeForce RTX 2080 Ti
-  Driver           595.71.05
-
-Graphics stack
-  [ OK ] Vulkan is working
-  [WARN] Wayland session — Wine's Wayland driver is still unreliable for TouchDesigner
-
-Bottles
-  [ OK ] Using bottle: touchgpt
-  Runner           soda-11.0-10
-  DXVK             dxvk-3.1
-  Arch             win64
-  [ OK ] Runner binary: .../runners/soda-11.0-10/bin/wine
-
-TouchDesigner
-  [ OK ] Executable: .../drive_c/TouchDesigner/bin/TouchDesigner.exe
-  Build            2025.33070
-  [WARN] mimalloc-redirect.dll is present
-         it patches malloc for every DLL in the process, including Wine's DWrite,
-         which faults with 0xc0000005 while loading a project and hangs the splash
-  [ OK ] all 4 ids_peak DLL(s) have a zeroed entry point
-
-Summary
-  8 ok, 3 warning(s), 0 failure(s)
-
-Suggested actions
-  1. Launch with WAYLAND_DISPLAY="" so Wine uses XWayland (td-launch does this).
-  2. Set MIMALLOC_DISABLE_REDIRECT=1 when launching (td-launch does this).
-```
-
-</details>
+![td-doctor](docs/assets/td-doctor.png)
 
 ### When it hangs and you have no idea why
 
@@ -221,6 +200,10 @@ TouchDesigner is a product of [Derivative](https://derivative.ca). This project
 is unaffiliated with them, and running TouchDesigner on Wine is not something
 they support. You still need a licence to use it; the free non-commercial one is
 enough.
+
+Artwork: the TouchDesigner icon in the header is taken from `TouchDesigner.exe`
+and belongs to Derivative, used here only to identify the application. Tux is by
+Larry Ewing, created with The GIMP.
 
 ## License
 

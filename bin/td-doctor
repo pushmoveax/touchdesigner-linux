@@ -21,11 +21,11 @@ FIX_MIMALLOC='Set MIMALLOC_DISABLE_REDIRECT=1 when launching (td-launch does thi
 FIX_IDS_PEAK='Run: td-patch-ids-peak <TouchDesigner bin dir> --apply'
 
 hdr()   { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
-kv()    { printf '  %-16s %s\n' "$1" "${2:-$C_DIM(unknown)$C_RESET}"; }
-ok()    { printf '  [%s OK %s] %s\n'  "$C_GREEN"  "$C_RESET" "$1"; ok_count=$((ok_count + 1)); }
-warn()  { printf '  [%sWARN%s] %s\n'  "$C_YELLOW" "$C_RESET" "$1"; warn_count=$((warn_count + 1)); }
-bad()   { printf '  [%sFAIL%s] %s\n'  "$C_RED"    "$C_RESET" "$1"; fail_count=$((fail_count + 1)); }
-note()  { printf '         %s%s%s\n' "$C_DIM" "$1" "$C_RESET"; }
+kv()    { printf '  %-16s %s\n' "$1" "$(td_tilde "${2:-$C_DIM(unknown)$C_RESET}")"; }
+ok()    { printf '  [%s OK %s] %s\n'  "$C_GREEN"  "$C_RESET" "$(td_tilde "$1")"; ok_count=$((ok_count + 1)); }
+warn()  { printf '  [%sWARN%s] %s\n'  "$C_YELLOW" "$C_RESET" "$(td_tilde "$1")"; warn_count=$((warn_count + 1)); }
+bad()   { printf '  [%sFAIL%s] %s\n'  "$C_RED"    "$C_RESET" "$(td_tilde "$1")"; fail_count=$((fail_count + 1)); }
+note()  { printf '         %s%s%s\n' "$C_DIM" "$(td_tilde "$1")" "$C_RESET"; }
 # Suggestions are deduplicated: the same fix is often implied by both a
 # static check and a log signature.
 fix() {
@@ -334,7 +334,7 @@ if (( ${#FIXES[@]} )); then
 	printf '\n%sSuggested actions%s\n' "$C_BOLD" "$C_RESET"
 	i=1
 	for f in "${FIXES[@]}"; do
-		printf '  %d. %s\n' "$i" "$f"
+		printf '  %d. %s\n' "$i" "$(td_tilde "$f")"
 		i=$((i + 1))
 	done
 fi

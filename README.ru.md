@@ -1,9 +1,27 @@
+<div align="center">
+
+<img src="docs/assets/header.png" alt="" width="300">
+
 # TouchDesigner на Linux
 
-Поставить TouchDesigner на Linux с нуля — и добиться, чтобы он реально
-запустился.
+**Поставить TouchDesigner на Linux с нуля — и добиться, чтобы он реально
+запустился.**
 
-*[English version](README.md)*
+![license](https://img.shields.io/badge/license-MIT-blue)
+![platform](https://img.shields.io/badge/platform-Linux-informational)
+![via](https://img.shields.io/badge/via-Bottles%20%2B%20Wine-a0522d)
+
+[English](README.md) · Русский
+
+</div>
+
+![TouchDesigner 2025.33070 на EndeavourOS](docs/assets/touchdesigner-on-linux.jpg)
+
+<div align="center"><sub>
+
+TouchDesigner 2025.33070 · EndeavourOS · KDE Plasma 6.6.5 на Wayland · RTX 2080 Ti · Bottles + Wine
+
+</sub></div>
 
 У TouchDesigner нет сборки под Linux. Через Wine он работает хорошо — если
 пережить момент, когда он нормально ставится, запускается и намертво зависает на
@@ -38,6 +56,8 @@ td-setup              # сделать всё
 ```sh
 td-setup --dry-run
 ```
+
+![td-setup --dry-run](docs/assets/td-setup.png)
 
 Потом:
 
@@ -100,6 +120,8 @@ td-doctor --log        # почему упал последний запуск
 DXVK, сборку TouchDesigner и известные проблемные DLL, после чего печатает
 готовую команду на каждую найденную проблему. Ничего не меняется, пока ты сам её
 не выполнишь.
+
+![td-doctor](docs/assets/td-doctor.png)
 
 ### Когда висит и непонятно почему
 
@@ -178,6 +200,10 @@ mimalloc/DWrite, падения в `ids_peak`, падения в шрифтов�
 TouchDesigner — продукт [Derivative](https://derivative.ca). Проект с ними не
 связан, запуск через Wine ими не поддерживается. Лицензия всё равно нужна;
 бесплатной non-commercial достаточно.
+
+Графика: иконка TouchDesigner в шапке взята из `TouchDesigner.exe` и принадлежит
+Derivative, использована только для обозначения приложения. Tux — работа Larry
+Ewing, сделана в The GIMP.
 
 ## Лицензия
 

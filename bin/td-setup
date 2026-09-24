@@ -106,17 +106,17 @@ step() {
 	step_no=$((step_no + 1))
 	printf '\n%s[%d/8] %s%s\n' "$C_BOLD" "$step_no" "$1" "$C_RESET"
 }
-say()  { printf '  %s\n' "$*"; }
-good() { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-skip() { printf '  %s·%s %s\n' "$C_DIM" "$C_RESET" "$*"; }
+say()  { printf '  %s\n' "$(td_tilde "$*")"; }
+good() { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$(td_tilde "$*")"; }
+skip() { printf '  %s·%s %s\n' "$C_DIM" "$C_RESET" "$(td_tilde "$*")"; }
 
 # Run a state-changing command, or just show it under --dry-run.
 run() {
 	if (( dry_run )); then
-		printf '  %swould run:%s %s\n' "$C_DIM" "$C_RESET" "$*"
+		printf '  %swould run:%s %s\n' "$C_DIM" "$C_RESET" "$(td_tilde "$*")"
 		return 0
 	fi
-	printf '  %s$%s %s\n' "$C_DIM" "$C_RESET" "$*"
+	printf '  %s$%s %s\n' "$C_DIM" "$C_RESET" "$(td_tilde "$*")"
 	"$@"
 }
 
