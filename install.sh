@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-#
-# Put td-doctor, td-launch and td-patch-ids-peak on PATH and add a desktop
-# entry, so TouchDesigner starts from the application menu with the
-# compatibility environment already applied.
-#
-# Symlinks are used, so this repository has to stay where it is. Move it and
-# re-run this script.
 
 set -euo pipefail
 
@@ -15,16 +8,12 @@ APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
 DESKTOP="$APP_DIR/touchdesigner.desktop"
 
-# shellcheck source=lib/td-common.sh
 source "$ROOT/lib/td-common.sh"
 
 TOOLS=(td-setup td-doctor td-launch td-patch-ids-peak)
 
 say() { printf '%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 
-# Never clobber something the user wrote by hand; keep it as .bak. An existing
-# .bak is left alone: it holds their original, whereas anything we would move
-# on top of it is a file we generated on an earlier run.
 back_up() {
 	local target="$1" name
 	name=$(basename "$target")
@@ -38,8 +27,6 @@ back_up() {
 	fi
 }
 
-# Undo of back_up: if we shadowed something of the user's, give it back rather
-# than leaving them with no launcher at all.
 restore_backup() {
 	local target="$1"
 	if [[ -e "$target.bak" && ! -e "$target" ]]; then
@@ -74,8 +61,6 @@ uninstall() {
 
 mkdir -p "$BIN_DIR" "$APP_DIR"
 
-# --------------------------------------------------------------- commands ----
-
 for t in "${TOOLS[@]}"; do
 	chmod +x "$ROOT/bin/$t"
 	back_up "$BIN_DIR/$t"
@@ -83,12 +68,9 @@ for t in "${TOOLS[@]}"; do
 done
 say "linked ${TOOLS[*]} into $BIN_DIR"
 
-# `touchdesigner` is the friendly name people actually type.
 back_up "$BIN_DIR/touchdesigner"
 ln -sfn "$ROOT/bin/td-launch" "$BIN_DIR/touchdesigner"
 say "linked touchdesigner -> td-launch"
-
-# ------------------------------------------------------------------- icon ----
 
 icon_line=""
 if command -v wrestool >/dev/null 2>&1 && command -v icotool >/dev/null 2>&1; then
@@ -101,15 +83,11 @@ if command -v wrestool >/dev/null 2>&1 && command -v icotool >/dev/null 2>&1; th
 	if [[ -n "$exe" && -f "$exe" ]]; then
 		tmp=$(mktemp -d)
 		trap 'rm -rf "$tmp"' EXIT
-		# Resource 101 is the application icon by Windows convention; the other
-		# groups in TouchDesigner.exe are .toe/.tox document icons, which look
-		# wrong in an application menu.
 		wrestool -x -t 14 -n 101 -o "$tmp/app.ico" "$exe" >/dev/null 2>&1
 		ico="$tmp/app.ico"
 		[[ -s "$ico" ]] || ico=$(find "$tmp" -name '*.ico' -print -quit)
 		if [[ -n "$ico" && -s "$ico" ]]; then
 			mkdir -p "$ICON_DIR"
-			# Largest frame in the .ico is the one worth keeping.
 			if icotool -x -o "$tmp" "$ico" >/dev/null 2>&1; then
 				png=$(find "$tmp" -name '*.png' -printf '%s %p\n' | sort -rn | head -1 | cut -d' ' -f2-) || png=""
 				if [[ -n "$png" ]]; then
@@ -122,8 +100,6 @@ if command -v wrestool >/dev/null 2>&1 && command -v icotool >/dev/null 2>&1; th
 	fi
 fi
 [[ -n "$icon_line" ]] || icon_line="Icon=application-x-executable"
-
-# ---------------------------------------------------------------- desktop ----
 
 back_up "$DESKTOP"
 cat > "$DESKTOP" <<EOF
@@ -146,8 +122,6 @@ say "wrote $DESKTOP"
 
 command -v update-desktop-database >/dev/null 2>&1 \
 	&& update-desktop-database "$APP_DIR" 2>/dev/null || true
-
-# ----------------------------------------------------------------- report ----
 
 case ":$PATH:" in
 	*":$BIN_DIR:"*) ;;

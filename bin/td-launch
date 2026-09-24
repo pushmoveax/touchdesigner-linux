@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
-#
-# td-launch — start TouchDesigner in a Bottles/Wine prefix with the
-# compatibility environment that is known to work on Linux.
-#
-# Everything it sets is documented in docs/known-issues.md. Each fix can be
-# turned off individually so you can bisect a broken setup without editing
-# this file.
 
 set -uo pipefail
 
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 ROOT=$(dirname "$(dirname "$SELF")")
-# shellcheck source=../lib/td-common.sh
 source "$ROOT/lib/td-common.sh"
 
 usage() {
@@ -62,11 +54,8 @@ while (( $# )); do
 	esac
 done
 
-# ---------------------------------------------------------------- config ----
-
 config=$(td_config_file)
 if [[ -f "$config" ]]; then
-	# shellcheck disable=SC1090
 	source "$config"
 fi
 
@@ -76,15 +65,11 @@ exe="${opt_exe:-${TD_EXE:-}}"
 runner_name="${TD_RUNNER:-}"
 wine=""
 
-# ------------------------------------------------------- locate the prefix ----
-
 if [[ -z "$prefix" ]]; then
 	data=$(td_bottles_data_dir) \
 		|| die "no Bottles installation found; use --prefix to point at a Wine prefix"
 
 	if [[ -z "$bottle" ]]; then
-		# Pick the bottle that actually contains TouchDesigner. A fresh bottle
-		# with no TouchDesigner in it is a very common source of confusion.
 		while read -r cand; do
 			[[ -n "$cand" ]] || continue
 			if td_find_exe "$data/bottles/$cand" >/dev/null; then
@@ -104,8 +89,6 @@ if [[ -z "$prefix" ]]; then
 			|| die "cannot read Runner from $prefix/bottle.yml"
 	fi
 	if ! wine=$(td_find_wine "$data/runners/$runner_name"); then
-		# A sys-wine-* runner lives outside the Bottles runner directory; fall
-		# through to $PATH below rather than treating it as a broken bottle.
 		td_runner_is_system "$runner_name" \
 			|| die "no wine binary in runner '$runner_name' under $data/runners"
 		warn_msg "bottle uses the system Wine ('$runner_name'); falling back to wine on \$PATH"
@@ -113,8 +96,6 @@ if [[ -z "$prefix" ]]; then
 	fi
 fi
 
-# A raw --prefix, or a bottle whose runner we could not resolve, falls back to
-# whatever wine is on PATH.
 if [[ -z "$wine" ]]; then
 	wine=$(command -v wine) \
 		|| die "no wine on PATH and no Bottles runner resolved"
@@ -126,26 +107,18 @@ if [[ -z "$exe" ]]; then
 fi
 [[ -f "$exe" ]] || die "no such executable: $exe"
 
-# ------------------------------------------------------------ environment ----
-
 env_args=(
 	"WINEPREFIX=$prefix"
 )
 
-# The one that matters: TouchDesigner's bundled mimalloc-redirect.dll patches
-# malloc for every DLL in the process, including Wine's DWrite, which faults
-# with 0xc0000005 while enumerating fonts and hangs the loading project.
 if [[ "${TD_KEEP_MIMALLOC:-0}" != 1 ]]; then
 	env_args+=("MIMALLOC_DISABLE_REDIRECT=1")
 fi
 
-# Wine's Wayland driver is still young; forcing the X11/XWayland path avoids
-# the window never becoming interactive under KDE Plasma.
 if [[ "${TD_KEEP_WAYLAND:-0}" != 1 && "$(td_session_type)" == "wayland" ]]; then
 	env_args+=("WAYLAND_DISPLAY=")
 fi
 
-# Keeps the NVIDIA driver from spinning on the compositor.
 if [[ "${TD_NO_GL_YIELD:-0}" != 1 ]] && td_is_nvidia; then
 	env_args+=("__GL_YIELD=USLEEP")
 fi
@@ -160,20 +133,12 @@ if [[ -n "${TD_EXTRA_ENV:-}" ]]; then
 	env_args+=("${TD_EXTRA_ENV[@]}")
 fi
 
-# ------------------------------------------------------- argument rewriting ----
-
-# A .toe handed over by a file manager arrives as a Unix path, which
-# TouchDesigner cannot open. Wine does not translate program arguments, so do
-# it here: winepath if the runner ships it, otherwise the Z: drive, which maps
-# to / in every default prefix.
 td_to_windows_path() {
 	local unix="$1" winepath_bin abs
 	abs=$(readlink -f "$unix")
 	winepath_bin="$(dirname "$wine")/winepath"
 	if [[ -x "$winepath_bin" ]]; then
 		local out
-		# Runners print their own banners, so keep only the last line that
-		# actually looks like a Windows path, and drop any CR.
 		out=$(WINEPREFIX="$prefix" WINEDEBUG=-all "$winepath_bin" -w "$abs" 2>/dev/null \
 			| tr -d '\r' | grep -E '^[A-Za-z]:\\' | tail -1)
 		if [[ -n "$out" ]]; then
@@ -197,8 +162,6 @@ for arg in "${passthrough[@]}"; do
 	fi
 done
 
-# ------------------------------------------------------------------- run ----
-
 state=$(td_state_dir)
 log="$state/last-run.log"
 
@@ -219,8 +182,6 @@ fi
 mkdir -p "$state" || die "cannot create $state"
 cd "$(dirname "$exe")" || die "cannot enter $(dirname "$exe")"
 
-# stdout and stderr both go to the log so that a crash is still diagnosable
-# after the terminal is gone, and PIPESTATUS keeps Wine's real exit code.
 env "${env_args[@]}" "$wine" "$exe" "${args[@]}" 2>&1 \
 	| tee "$log"
 

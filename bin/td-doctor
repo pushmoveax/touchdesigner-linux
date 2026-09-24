@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
-#
-# td-doctor — tell you why TouchDesigner will not start under Wine.
-#
-# Read-only by design: it inspects, it never changes anything. Fixes are
-# applied by td-patch-ids-peak and td-launch, which it points you at.
 
 set -uo pipefail
 
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 ROOT=$(dirname "$(dirname "$SELF")")
-# shellcheck source=../lib/td-common.sh
 source "$ROOT/lib/td-common.sh"
 
 ok_count=0; warn_count=0; fail_count=0
 FIXES=()
 
-# Canonical wording for fixes that both a static check and a log signature
-# can trigger, so that dedup in fix() recognises them as the same advice.
 FIX_MIMALLOC='Set MIMALLOC_DISABLE_REDIRECT=1 when launching (td-launch does this).'
 FIX_IDS_PEAK='Run: td-patch-ids-peak <TouchDesigner bin dir> --apply'
 
@@ -26,8 +18,6 @@ ok()    { printf '  [%s OK %s] %s\n'  "$C_GREEN"  "$C_RESET" "$(td_tilde "$1")";
 warn()  { printf '  [%sWARN%s] %s\n'  "$C_YELLOW" "$C_RESET" "$(td_tilde "$1")"; warn_count=$((warn_count + 1)); }
 bad()   { printf '  [%sFAIL%s] %s\n'  "$C_RED"    "$C_RESET" "$(td_tilde "$1")"; fail_count=$((fail_count + 1)); }
 note()  { printf '         %s%s%s\n' "$C_DIM" "$(td_tilde "$1")" "$C_RESET"; }
-# Suggestions are deduplicated: the same fix is often implied by both a
-# static check and a log signature.
 fix() {
 	local f
 	for f in "${FIXES[@]}"; do
@@ -72,8 +62,6 @@ done
 printf '%sTouchDesigner Linux Doctor%s %s%s%s\n' \
 	"$C_BOLD" "$C_RESET" "$C_DIM" "$TD_VERSION" "$C_RESET"
 
-# ================================================================= system ====
-
 hdr "System"
 kv "Distro"  "$(td_distro)"
 kv "Kernel"  "$(uname -r)"
@@ -101,8 +89,6 @@ if [[ "$(td_session_type)" == "wayland" ]]; then
 else
 	ok "X11 session"
 fi
-
-# ================================================================ prefix ====
 
 prefix=""; bottle=""; data=""; runner_name=""; wine=""
 
@@ -179,8 +165,6 @@ else
 	fi
 fi
 
-# ========================================================= touchdesigner ====
-
 exe=""
 if [[ -n "$prefix" ]]; then
 	hdr "TouchDesigner"
@@ -189,7 +173,6 @@ if [[ -n "$prefix" ]]; then
 		ok "Executable: $exe"
 		kv "Build" "$(td_exe_version "$exe")"
 
-		# ---- mimalloc: the single most common hang on Wine 10 runners --------
 		if [[ -f "$bin_dir/mimalloc-redirect.dll" ]]; then
 			warn "mimalloc-redirect.dll is present"
 			note "it patches malloc for every DLL in the process, including Wine's DWrite,"
@@ -199,7 +182,6 @@ if [[ -n "$prefix" ]]; then
 			ok "no mimalloc-redirect.dll in this build"
 		fi
 
-		# ---- IDS Peak camera SDK -------------------------------------------
 		patcher="$ROOT/bin/td-patch-ids-peak"
 		ids_present=0; ids_unpatched=0
 		for dll in "${TD_IDS_PEAK_DLLS[@]}"; do
@@ -221,7 +203,6 @@ if [[ -n "$prefix" ]]; then
 			warn "$ids_present ids_peak DLL(s) present, cannot check (td-patch-ids-peak missing)"
 		fi
 
-		# ---- UI font fix ----------------------------------------------------
 		tox=$(find "$prefix" -iname 'wine_ui_fixes.tox' -print -quit 2>/dev/null)
 		if [[ -n "$tox" ]]; then
 			ok "UI font fix present: $tox"
@@ -236,8 +217,6 @@ if [[ -n "$prefix" ]]; then
 		exe=""
 	fi
 fi
-
-# =============================================================== launcher ====
 
 hdr "Launcher"
 if [[ -x "$HOME/.local/bin/touchdesigner" ]]; then
@@ -258,8 +237,6 @@ case ":$PATH:" in
 	   fix "Add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
 
-# ==================================================================== log ====
-
 if (( want_log )); then
 	[[ -n "$log_file" ]] || log_file="$(td_state_dir)/last-run.log"
 	hdr "Log analysis"
@@ -275,8 +252,6 @@ if (( want_log )); then
 		matched=0
 
 		if grep -q 'c0000005' "$log_file"; then
-			# Look at the frames immediately around the first access violation:
-			# that is where the offending module shows up.
 			window=$(grep -m1 -A 40 'c0000005' "$log_file")
 			if grep -qi 'mimalloc' <<<"$window"; then
 				bad "access violation inside mimalloc — the known mimalloc/DWrite hang"
@@ -321,8 +296,6 @@ if (( want_log )); then
 		fi
 	fi
 fi
-
-# ================================================================ summary ====
 
 hdr "Summary"
 printf '  %s%d ok%s, %s%d warning(s)%s, %s%d failure(s)%s\n' \

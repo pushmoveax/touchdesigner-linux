@@ -33,7 +33,10 @@ idempotent, so "step 3 fails, steps 1-2 are fine" is a complete bug report.
 ## Code
 
 - Bash, `set -uo pipefail`, tabs, no external dependencies beyond
-  `bash`/`python3`/`curl`/`tar`/coreutils. `shellcheck` clean.
+  `bash`/`python3`/`curl`/`tar`/coreutils.
+- No comments. Names and structure carry the code; anything that needs
+  explaining goes in `docs/known-issues.md`, which is where a reader looking
+  for the reasoning will actually go.
 - `td-doctor` is read-only. Anything that changes the system belongs in
   `td-setup`, `td-launch`, `td-patch-ids-peak` or `install.sh`, and anything
   that modifies a file makes a `.bak` first and offers a way back.

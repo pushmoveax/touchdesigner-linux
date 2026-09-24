@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Zero AddressOfEntryPoint in TouchDesigner's bundled IDS Peak DLLs.
-
-TouchDesigner ships the IDS Peak camera SDK. Wine calls DllMain on those
-libraries at load time and some of them fault, which takes TouchDesigner down
-with it. Zeroing AddressOfEntryPoint in the PE header makes the loader skip
-DllMain: the DLL still loads and its exports still resolve, but no init code
-runs. This is the workaround the TouchDesigner-on-Linux community settled on
-(see docs/known-issues.md for provenance).
-
-Every file is copied to <name>.bak before the first write, and --restore puts
-the originals back.
-
-The PE checksum is deliberately not recomputed. Windows only verifies it for
-drivers and Wine never verifies it, so a stale checksum is harmless here.
-"""
 
 from __future__ import annotations
 
@@ -23,8 +8,6 @@ import struct
 import sys
 from pathlib import Path
 
-# Offset of AddressOfEntryPoint relative to the start of the PE signature:
-# 4 (signature) + 20 (COFF header) + 16 (into the optional header).
 ENTRY_OFFSET_FROM_PE = 40
 
 DEFAULT_DLLS = [
@@ -34,21 +17,16 @@ DEFAULT_DLLS = [
     "ids_peak_ipl.dll",
 ]
 
-# ids_peak.dll is intentionally not in DEFAULT_DLLS: it loads cleanly and is
-# not part of the known-good fix. --include-base opts into it.
 BASE_DLL = "ids_peak.dll"
 
 GREEN, YELLOW, RED, DIM, RESET = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
 if not sys.stdout.isatty():
     GREEN = YELLOW = RED = DIM = RESET = ""
 
-
 class PEError(Exception):
     pass
 
-
 def entry_point_offset(fh) -> tuple[int, int]:
-    """Return (file offset of AddressOfEntryPoint, its current value)."""
     fh.seek(0)
     if fh.read(2) != b"MZ":
         raise PEError("not a DOS/PE image (no MZ signature)")
@@ -73,9 +51,7 @@ def entry_point_offset(fh) -> tuple[int, int]:
     (value,) = struct.unpack("<I", fh.read(4))
     return offset, value
 
-
 def find_bin_dir(start: Path) -> Path | None:
-    """Locate the TouchDesigner bin directory from a bin dir, install dir or prefix."""
     if (start / "TouchDesigner.exe").exists() or list(start.glob("ids_peak*.dll")):
         return start
     for depth in ("*/bin", "drive_c/*/bin", "drive_c/*/*/bin"):
@@ -86,13 +62,11 @@ def find_bin_dir(start: Path) -> Path | None:
         return exe.parent
     return None
 
-
 def report(name: str, tag: str, colour: str, detail: str = "") -> None:
     line = f"  [{colour}{tag}{RESET}] {name}"
     if detail:
         line += f" {DIM}{detail}{RESET}"
     print(line)
-
 
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -203,7 +177,6 @@ def main() -> int:
             print(f"Run: {sys.argv[0]} {bin_dir} --apply")
 
     return 1 if failed else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
