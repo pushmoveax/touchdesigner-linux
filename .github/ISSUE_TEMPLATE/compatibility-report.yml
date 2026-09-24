@@ -1,0 +1,58 @@
+name: Compatibility report
+description: Tell us whether TouchDesigner works on your machine, and what it took
+title: "[compat] <distro> / <desktop> / <GPU>"
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. These reports are what make the compatibility matrix worth anything.
+
+        Run `td-doctor` and paste the output below — it already contains every
+        detail we need about your distro, GPU, runner and TouchDesigner build.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: td-doctor output
+      render: text
+      placeholder: $ td-doctor
+    validations:
+      required: true
+  - type: dropdown
+    id: state
+    attributes:
+      label: Does TouchDesigner start?
+      options:
+        - Yes, with the fixes td-doctor suggested
+        - Yes, with no fixes at all
+        - Yes, but only with extra changes not in this repo
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: fixes
+    attributes:
+      label: What did you have to do?
+      description: Anything beyond what td-doctor suggested, in the order that worked.
+  - type: textarea
+    id: features
+    attributes:
+      label: What did you actually test?
+      description: |
+        Only list what you really tried. `?` is a fine answer; a wrong ✅ costs
+        someone an evening. See docs/compatibility.md for the template.
+      value: |
+        | Feature | Status | Notes |
+        | --- | --- | --- |
+        | Startup, new project | | |
+        | Save / reopen `.toe` | | |
+        | General UI, node editing | | |
+        | Heavy operator graphs | | |
+        | UI font | | |
+        | GLSL TOP | | |
+        | Render TOP / 3D | | |
+        | Movie File In TOP | | |
+        | NDI / Syphon-Spout | | |
+        | Network DATs | | |
+        | Python extensions | | |
+        | CUDA-dependent operators | | |

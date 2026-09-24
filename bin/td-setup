@@ -1,0 +1,502 @@
+#!/usr/bin/env bash
+#
+# td-setup — install TouchDesigner on Linux starting from nothing.
+#
+# Installs Bottles if it is missing, bootstraps a Wine runner and DXVK,
+# creates a 64-bit bottle, downloads the official TouchDesigner installer,
+# runs it silently, applies the Wine compatibility fixes and installs a
+# launcher.
+#
+# Every step checks whether it is already done first, so re-running after an
+# interrupted attempt is safe and cheap. --dry-run prints the whole plan
+# without touching anything.
+
+set -uo pipefail
+
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+ROOT=$(dirname "$(dirname "$SELF")")
+# shellcheck source=../lib/td-common.sh
+source "$ROOT/lib/td-common.sh"
+
+DEFAULT_BOTTLE="touchdesigner"
+DEFAULT_WIN_DIR='C:\TouchDesigner'
+DOWNLOAD_BASE="https://download.derivative.ca"
+
+# The build this project has actually been run against. Derivative removes old
+# builds from the download host, so this will eventually stop resolving — hence
+# the HEAD check and the message pointing at --build.
+DEFAULT_BUILD="2025.33070"
+
+SODA_REPO="bottlesdevs/wine"
+DXVK_REPO="doitsujin/dxvk"
+
+# Measured on a real run: a 2.8 GB installer, 2.9 GB that the self-extracting
+# wrapper unpacks into the prefix, and 8.5 GB and counting of installed files.
+MIN_FREE_GB=16
+
+# Give the installer this long before saying something is wrong (seconds).
+INSTALL_TIMEOUT=$(( 60 * 60 ))
+
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/td-linux"
+FLATPAK_ID="com.usebottles.bottles"
+BOTTLES_DATA_DEFAULT="$HOME/.var/app/$FLATPAK_ID/data/bottles"
+
+bottle="$DEFAULT_BOTTLE"
+build="$DEFAULT_BUILD"
+installer=""
+win_dir="$DEFAULT_WIN_DIR"
+runner_opt=""
+assume_yes=0
+dry_run=0
+delete_installer=0
+skip_launcher=0
+
+usage() {
+	cat <<EOF
+Usage: td-setup [options]
+
+Installs TouchDesigner on Linux from scratch: Bottles, a Wine runner, DXVK, a
+bottle, TouchDesigner itself, the compatibility fixes and a launcher.
+
+Options:
+  -b, --bottle NAME     bottle to create or reuse (default: $DEFAULT_BOTTLE)
+      --build VERSION   TouchDesigner build to download (default: $DEFAULT_BUILD)
+                        Current build numbers: https://derivative.ca/download
+  -i, --installer PATH  use a TouchDesigner .exe you already have
+      --dir PATH        install directory inside the bottle
+                        (default: $DEFAULT_WIN_DIR)
+      --runner NAME     Wine runner to use (default: newest Soda available,
+                        downloaded if you have none)
+      --delete-installer
+                        remove the downloaded .exe when finished
+                        (kept by default: it is 2.8 GB to fetch again)
+      --skip-launcher   do not install the menu entry and commands
+  -y, --yes             do not ask for confirmation
+  -n, --dry-run         print the plan, change nothing
+  -h, --help            this text
+      --version         print version
+
+Needs about ${MIN_FREE_GB} GB of free disk during installation, about 3 GB of
+download, and 20-40 minutes for the install step itself: under Wine the
+installer is slow, and it is slow silently.
+EOF
+}
+
+while (( $# )); do
+	case "$1" in
+		-b|--bottle)     bottle="${2:?}"; shift 2 ;;
+		--build)         build="${2:?}"; shift 2 ;;
+		-i|--installer)  installer="${2:?}"; shift 2 ;;
+		--dir)           win_dir="${2:?}"; shift 2 ;;
+		--runner)        runner_opt="${2:?}"; shift 2 ;;
+		--delete-installer) delete_installer=1; shift ;;
+		--skip-launcher) skip_launcher=1; shift ;;
+		-y|--yes)        assume_yes=1; shift ;;
+		-n|--dry-run)    dry_run=1; shift ;;
+		-h|--help)       usage; exit 0 ;;
+		--version)       printf 'td-setup %s\n' "$TD_VERSION"; exit 0 ;;
+		*)               die "unknown option: $1 (see --help)" ;;
+	esac
+done
+
+# ------------------------------------------------------------------ output ----
+
+step_no=0
+step() {
+	step_no=$((step_no + 1))
+	printf '\n%s[%d/8] %s%s\n' "$C_BOLD" "$step_no" "$1" "$C_RESET"
+}
+say()  { printf '  %s\n' "$*"; }
+good() { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+skip() { printf '  %s·%s %s\n' "$C_DIM" "$C_RESET" "$*"; }
+
+# Run a state-changing command, or just show it under --dry-run.
+run() {
+	if (( dry_run )); then
+		printf '  %swould run:%s %s\n' "$C_DIM" "$C_RESET" "$*"
+		return 0
+	fi
+	printf '  %s$%s %s\n' "$C_DIM" "$C_RESET" "$*"
+	"$@"
+}
+
+confirm() {
+	(( assume_yes || dry_run )) && return 0
+	[[ -t 0 ]] || die "$1 — refusing to assume in a non-interactive shell; pass --yes"
+	local reply
+	read -r -p "  $1 [y/N] " reply
+	[[ "$reply" == [yY]* ]]
+}
+
+need_cmd() {
+	command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+# The current tag of a GitHub repository, without using the API: anonymous API
+# calls are rate limited to 60/hour per IP and answer 403 on a shared
+# connection, which is exactly the machine this script has to work on.
+# /releases/latest is a plain redirect to the tagged release page.
+gh_latest_tag() {
+	curl -fsSI --max-time 60 "https://github.com/$1/releases/latest" 2>/dev/null \
+		| tr -d '\r' \
+		| awk 'tolower($1) == "location:" { print $2 }' \
+		| tail -1 \
+		| sed 's|.*/||'
+}
+
+url_exists() { curl -fsSI --max-time 60 -o /dev/null -L "$1"; }
+
+# Unpack an archive whose single top-level directory should become <dest>.
+# Soda ships soda-X-x86_64/ but Bottles expects the directory to be named
+# after the release tag, so the top level is renamed rather than kept.
+unpack_into() {
+	local archive="$1" dest="$2" tmp top
+	tmp=$(mktemp -d) || return 1
+	tar -xf "$archive" -C "$tmp" || { rm -rf "$tmp"; return 1; }
+	top=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print -quit)
+	[[ -n "$top" ]] || { rm -rf "$tmp"; return 1; }
+	mkdir -p "$(dirname "$dest")"
+	rm -rf "$dest"
+	mv "$top" "$dest" || { rm -rf "$tmp"; return 1; }
+	rm -rf "$tmp"
+}
+
+# Download with resume, showing progress, and check the result against the
+# length the server promised.
+fetch() {
+	local url="$1" out="$2" expected="$3"
+	curl -fL -C - --progress-bar --max-time 7200 -o "$out" "$url" || return 1
+	if [[ -n "$expected" && "$expected" != 0 ]]; then
+		local got
+		got=$(stat -c %s "$out" 2>/dev/null || echo 0)
+		if (( got != expected )); then
+			warn_msg "downloaded $got bytes, server said $expected"
+			return 1
+		fi
+	fi
+}
+
+printf '%sTouchDesigner Linux setup%s %s%s%s\n' \
+	"$C_BOLD" "$C_RESET" "$C_DIM" "$TD_VERSION" "$C_RESET"
+(( dry_run )) && printf '%sdry run — nothing will be changed%s\n' "$C_YELLOW" "$C_RESET"
+
+# ================================================================= 1. deps ====
+
+step "Checking prerequisites"
+
+need_cmd curl
+need_cmd tar
+need_cmd python3
+need_cmd find
+
+if [[ -n "$installer" ]]; then
+	[[ -f "$installer" ]] || die "no such installer: $installer"
+	installer=$(readlink -f "$installer")
+	good "using your installer: $installer"
+fi
+
+data="$BOTTLES_DATA_DEFAULT"
+if existing=$(td_bottles_data_dir); then
+	data="$existing"
+	good "Bottles data directory: $data"
+else
+	say "Bottles has not been set up yet; will use $data"
+fi
+
+# Free space is what matters on the filesystem that will hold the bottle.
+space_probe="$data"
+while [[ ! -d "$space_probe" && "$space_probe" != "/" ]]; do
+	space_probe=$(dirname "$space_probe")
+done
+free_gb=$(df -BG --output=avail "$space_probe" 2>/dev/null | tail -1 | tr -dc '0-9')
+if [[ -n "$free_gb" ]]; then
+	if (( free_gb < MIN_FREE_GB )); then
+		warn_msg "only ${free_gb} GB free on $space_probe, ${MIN_FREE_GB} GB recommended"
+		confirm "Continue anyway?" || exit 1
+	else
+		good "${free_gb} GB free on $space_probe"
+	fi
+fi
+
+if gpu=$(td_gpu_name) && [[ -n "$gpu" ]]; then
+	drv=$(td_gpu_driver)
+	good "GPU: $gpu${drv:+ (driver $drv)}"
+fi
+if command -v vulkaninfo >/dev/null 2>&1; then
+	vulkaninfo --summary >/dev/null 2>&1 \
+		&& good "Vulkan is working" \
+		|| warn_msg "Vulkan is not working — DXVK will fail; fix your GPU driver first"
+else
+	say "vulkaninfo not installed, skipping the Vulkan check"
+fi
+
+# ============================================================== 2. bottles ====
+
+step "Bottles"
+
+if command -v flatpak >/dev/null 2>&1 && flatpak info "$FLATPAK_ID" >/dev/null 2>&1; then
+	skip "already installed"
+else
+	need_cmd flatpak
+	confirm "Install Bottles from Flathub (about 700 MB)?" \
+		|| die "Bottles is required; install it yourself and re-run"
+	run flatpak remote-add --if-not-exists --user \
+		flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+	run flatpak install --user -y flathub "$FLATPAK_ID" \
+		|| die "flatpak install failed"
+	good "installed"
+fi
+
+bottles_cli() { flatpak run --command=bottles-cli "$FLATPAK_ID" "$@"; }
+
+# First run creates the data directory and loads the component catalogue.
+if [[ ! -d "$data" ]]; then
+	run bottles_cli list bottles >/dev/null 2>&1
+	(( dry_run )) || mkdir -p "$data/runners" "$data/dxvk" "$data/bottles"
+fi
+
+# ========================================================= 3. runner + dxvk ====
+
+step "Wine runner and DXVK"
+
+runner=""
+if [[ -n "$runner_opt" ]]; then
+	runner="$runner_opt"
+	[[ -d "$data/runners/$runner" ]] || die "no such runner: $data/runners/$runner"
+	good "using $runner"
+else
+	# Prefer Soda, which is what the Bottles project ships for this kind of app.
+	runner=$(find "$data/runners" -mindepth 1 -maxdepth 1 -type d -name 'soda-*' \
+		-printf '%f\n' 2>/dev/null | sort -V | tail -1)
+	[[ -n "$runner" ]] || runner=$(find "$data/runners" -mindepth 1 -maxdepth 1 -type d \
+		-printf '%f\n' 2>/dev/null | sort -V | tail -1)
+	if [[ -n "$runner" ]]; then
+		good "using existing runner: $runner"
+	else
+		say "no runner installed yet, fetching the latest Soda"
+		tag=$(gh_latest_tag "$SODA_REPO")
+		[[ -n "$tag" ]] || die "cannot resolve the latest Soda release from GitHub"
+		asset="$tag-x86_64.tar.xz"
+		url="https://github.com/$SODA_REPO/releases/download/$tag/$asset"
+		url_exists "$url" || die "no Soda build at $url
+  Download a runner inside Bottles instead, then re-run with --runner <name>."
+		say "$tag ($asset)"
+		if (( dry_run )); then
+			run fetch "$url" "$CACHE/$asset" ""
+			run unpack_into "$CACHE/$asset" "$data/runners/$tag"
+		else
+			mkdir -p "$CACHE"
+			fetch "$url" "$CACHE/$asset" "" || die "download failed: $url"
+			unpack_into "$CACHE/$asset" "$data/runners/$tag" \
+				|| die "cannot unpack $asset"
+			rm -f "$CACHE/$asset"
+		fi
+		runner="$tag"
+		good "installed runner $runner"
+	fi
+fi
+
+dxvk=$(find "$data/dxvk" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+	| sort -V | tail -1)
+if [[ -n "$dxvk" ]]; then
+	good "using existing DXVK: $dxvk"
+else
+	say "no DXVK installed yet, fetching the latest"
+	tag=$(gh_latest_tag "$DXVK_REPO")
+	[[ -n "$tag" ]] || die "cannot resolve the latest DXVK release from GitHub"
+	# Tags are vX.Y.Z, tarballs are dxvk-X.Y.Z.tar.gz.
+	dxvk="dxvk-${tag#v}"
+	asset="$dxvk.tar.gz"
+	url="https://github.com/$DXVK_REPO/releases/download/$tag/$asset"
+	url_exists "$url" || die "no DXVK build at $url
+  Install DXVK inside Bottles instead, then re-run."
+	say "$tag ($asset)"
+	if (( dry_run )); then
+		run fetch "$url" "$CACHE/$asset" ""
+		run unpack_into "$CACHE/$asset" "$data/dxvk/$dxvk"
+	else
+		mkdir -p "$CACHE"
+		fetch "$url" "$CACHE/$asset" "" || die "download failed: $url"
+		unpack_into "$CACHE/$asset" "$data/dxvk/$dxvk" || die "cannot unpack $asset"
+		rm -f "$CACHE/$asset"
+	fi
+	good "installed DXVK $dxvk"
+fi
+
+wine=""
+if ! (( dry_run )); then
+	wine=$(td_find_wine "$data/runners/$runner") \
+		|| die "runner $runner has no wine binary"
+	good "wine: $wine"
+fi
+
+# ================================================================ 4. bottle ====
+
+step "Bottle '$bottle'"
+
+prefix="$data/bottles/$bottle"
+if [[ -f "$prefix/bottle.yml" ]]; then
+	skip "already exists at $prefix"
+else
+	run bottles_cli new \
+		--bottle-name "$bottle" \
+		--environment gaming \
+		--arch win64 \
+		--runner "$runner" \
+		--dxvk "$dxvk" \
+		|| die "bottles-cli could not create the bottle"
+	if ! (( dry_run )); then
+		[[ -f "$prefix/bottle.yml" ]] \
+			|| die "bottle was not created at $prefix"
+		good "created"
+	fi
+fi
+
+# ============================================================= 5. installer ====
+
+step "TouchDesigner installer"
+
+if [[ -n "$installer" ]]; then
+	skip "using $installer"
+else
+	url="$DOWNLOAD_BASE/TouchDesigner.$build.exe"
+	installer="$CACHE/TouchDesigner.$build.exe"
+
+	size=$(curl -fsSI --max-time 60 -L "$url" 2>/dev/null \
+		| tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { print n }')
+	if [[ -z "${size:-}" ]]; then
+		die "build $build is not on $DOWNLOAD_BASE
+  Derivative removes older builds. Look up the current build number at
+  https://derivative.ca/download and pass it, e.g. --build 2026.10000
+  Or download the installer yourself and pass --installer <file.exe>"
+	fi
+	say "build $build, $(( size / 1024 / 1024 )) MB"
+
+	have=$(stat -c %s "$installer" 2>/dev/null || echo 0)
+	if (( have == size )); then
+		skip "already downloaded: $installer"
+	else
+		(( have > 0 )) && say "resuming from $(( have / 1024 / 1024 )) MB"
+		if (( dry_run )); then
+			run fetch "$url" "$installer" "$size"
+		else
+			mkdir -p "$CACHE"
+			fetch "$url" "$installer" "$size" || die "download failed: $url"
+			good "downloaded"
+		fi
+	fi
+fi
+
+# =============================================================== 6. install ====
+
+step "Installing TouchDesigner into the bottle"
+
+if ! (( dry_run )) && exe=$(td_find_exe "$prefix"); then
+	skip "already installed: $exe"
+else
+	# The installer is Inno Setup 6, so it takes the standard silent switches.
+	# /NOICONS skips the Windows shortcuts, which mean nothing here.
+	say "expect 20-40 minutes; the installer is silent, so progress is printed here"
+	if (( dry_run )); then
+		run env "WINEPREFIX=$prefix" "WINEDEBUG=-all" "<runner>/bin/wine" \
+			"$installer" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS "/DIR=$win_dir"
+	else
+		env WINEPREFIX="$prefix" WINEDEBUG=-all WAYLAND_DISPLAY="" \
+			"$wine" "$installer" \
+			/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS "/DIR=$win_dir" \
+			>>"$CACHE/install.log" 2>&1 &
+		install_pid=$!
+
+		# The installer is a self-extracting wrapper around Inno Setup and hands
+		# off to child processes, so its own exit says little. Watch the prefix
+		# grow instead, and give up rather than hang forever.
+		waited=0
+		while kill -0 "$install_pid" 2>/dev/null || pgrep -f "$(basename "$installer")" >/dev/null 2>&1; do
+			if (( waited >= INSTALL_TIMEOUT )); then
+				warn_msg "installer still running after $(( INSTALL_TIMEOUT / 60 )) minutes"
+				say "leaving it alone; check $CACHE/install.log, then re-run td-setup"
+				break
+			fi
+			if (( waited % 60 == 0 )); then
+				printf '  %s%6ds  installed so far: %s%s\n' "$C_DIM" "$waited" \
+					"$(du -sh "$prefix/drive_c" 2>/dev/null | cut -f1)" "$C_RESET"
+			fi
+			sleep 15
+			waited=$((waited + 15))
+		done
+		"$(dirname "$wine")/wineserver" -w 2>/dev/null
+
+		exe=$(td_find_exe "$prefix") \
+			|| die "no TouchDesigner.exe under $prefix after the installer ran
+  See $CACHE/install.log"
+		good "installed: $exe"
+	fi
+fi
+
+# ================================================================= 7. fixes ====
+
+step "Applying the Wine compatibility fixes"
+
+if (( dry_run )); then
+	run "$ROOT/bin/td-patch-ids-peak" "<bottle>" --apply
+	say "MIMALLOC_DISABLE_REDIRECT=1 is applied at launch by td-launch"
+else
+	bin_dir=$(dirname "$exe")
+	"$ROOT/bin/td-patch-ids-peak" "$bin_dir" --apply || warn_msg "ids_peak patch reported a problem"
+	say "MIMALLOC_DISABLE_REDIRECT=1 is applied at launch by td-launch"
+fi
+
+# ============================================================== 8. launcher ====
+
+step "Launcher"
+
+if (( skip_launcher )); then
+	skip "skipped on request"
+else
+	config=$(td_config_file)
+	if (( dry_run )); then
+		run "$ROOT/install.sh"
+		run sh -c "echo TD_BOTTLE=$bottle >> $config"
+	else
+		mkdir -p "$(dirname "$config")"
+		# Pin the bottle we just built, so td-launch does not have to guess if
+		# other bottles appear later.
+		if [[ -f "$config" ]] && grep -q '^TD_BOTTLE=' "$config"; then
+			sed -i "s|^TD_BOTTLE=.*|TD_BOTTLE=\"$bottle\"|" "$config"
+		else
+			printf 'TD_BOTTLE="%s"\n' "$bottle" >> "$config"
+		fi
+		good "pinned bottle '$bottle' in $config"
+		"$ROOT/install.sh" || warn_msg "install.sh reported a problem"
+	fi
+fi
+
+if (( delete_installer )) && ! (( dry_run )) && [[ "$installer" == "$CACHE/"* ]]; then
+	rm -f "$installer"
+	good "deleted $installer"
+elif [[ "$installer" == "$CACHE/"* && -f "$installer" ]]; then
+	say "installer kept at $installer (--delete-installer removes it)"
+fi
+
+# ================================================================== verify ====
+
+if (( dry_run )); then
+	printf '\n%sDry run complete.%s Re-run without --dry-run to do it.\n' \
+		"$C_BOLD" "$C_RESET"
+	exit 0
+fi
+
+printf '\n%sVerifying%s\n' "$C_BOLD" "$C_RESET"
+"$ROOT/bin/td-doctor" --bottle "$bottle"
+
+cat <<EOF
+
+${C_BOLD}Done.${C_RESET} Start TouchDesigner with:
+
+  touchdesigner
+
+or from your application menu. If it hangs, run:
+
+  td-doctor --log
+
+EOF

@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+#
+# td-doctor — tell you why TouchDesigner will not start under Wine.
+#
+# Read-only by design: it inspects, it never changes anything. Fixes are
+# applied by td-patch-ids-peak and td-launch, which it points you at.
+
+set -uo pipefail
+
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+ROOT=$(dirname "$(dirname "$SELF")")
+# shellcheck source=../lib/td-common.sh
+source "$ROOT/lib/td-common.sh"
+
+ok_count=0; warn_count=0; fail_count=0
+FIXES=()
+
+# Canonical wording for fixes that both a static check and a log signature
+# can trigger, so that dedup in fix() recognises them as the same advice.
+FIX_MIMALLOC='Set MIMALLOC_DISABLE_REDIRECT=1 when launching (td-launch does this).'
+FIX_IDS_PEAK='Run: td-patch-ids-peak <TouchDesigner bin dir> --apply'
+
+hdr()   { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
+kv()    { printf '  %-16s %s\n' "$1" "${2:-$C_DIM(unknown)$C_RESET}"; }
+ok()    { printf '  [%s OK %s] %s\n'  "$C_GREEN"  "$C_RESET" "$1"; ok_count=$((ok_count + 1)); }
+warn()  { printf '  [%sWARN%s] %s\n'  "$C_YELLOW" "$C_RESET" "$1"; warn_count=$((warn_count + 1)); }
+bad()   { printf '  [%sFAIL%s] %s\n'  "$C_RED"    "$C_RESET" "$1"; fail_count=$((fail_count + 1)); }
+note()  { printf '         %s%s%s\n' "$C_DIM" "$1" "$C_RESET"; }
+# Suggestions are deduplicated: the same fix is often implied by both a
+# static check and a log signature.
+fix() {
+	local f
+	for f in "${FIXES[@]}"; do
+		[[ "$f" == "$1" ]] && return 0
+	done
+	FIXES+=("$1")
+}
+
+usage() {
+	cat <<EOF
+Usage: td-doctor [options]
+
+Options:
+  -b, --bottle NAME   inspect this bottle (default: the one with TouchDesigner)
+  -p, --prefix DIR    inspect this Wine prefix directly
+  -l, --log [FILE]    also analyse a Wine log for known crash signatures
+                      (default: $(td_state_dir)/last-run.log)
+  -h, --help          this text
+      --version       print version
+
+td-doctor only reads. To apply what it recommends:
+  td-patch-ids-peak <prefix> --apply
+  td-launch
+EOF
+}
+
+opt_bottle=""; opt_prefix=""; log_file=""; want_log=0
+
+while (( $# )); do
+	case "$1" in
+		-b|--bottle) opt_bottle="${2:-}"; shift 2 ;;
+		-p|--prefix) opt_prefix="${2:-}"; shift 2 ;;
+		-l|--log)
+			want_log=1
+			if [[ -n "${2:-}" && "${2:-}" != -* ]]; then log_file="$2"; shift 2; else shift; fi ;;
+		-h|--help) usage; exit 0 ;;
+		--version) printf 'td-doctor %s\n' "$TD_VERSION"; exit 0 ;;
+		*) die "unknown option: $1 (see --help)" ;;
+	esac
+done
+
+printf '%sTouchDesigner Linux Doctor%s %s%s%s\n' \
+	"$C_BOLD" "$C_RESET" "$C_DIM" "$TD_VERSION" "$C_RESET"
+
+# ================================================================= system ====
+
+hdr "System"
+kv "Distro"  "$(td_distro)"
+kv "Kernel"  "$(uname -r)"
+kv "Desktop" "$(td_desktop)"
+kv "Session" "$(td_session_type)"
+kv "GPU"     "$(td_gpu_name)"
+kv "Driver"  "$(td_gpu_driver)"
+
+hdr "Graphics stack"
+if command -v vulkaninfo >/dev/null 2>&1; then
+	if vulkaninfo --summary >/dev/null 2>&1; then
+		ok "Vulkan is working"
+	else
+		bad "vulkaninfo fails — DXVK cannot work without a usable Vulkan driver"
+		fix "Install/repair your Vulkan driver (mesa-vulkan-* or nvidia-utils)."
+	fi
+else
+	warn "vulkaninfo not installed, cannot verify Vulkan"
+	note "optional: install vulkan-tools to let td-doctor check this"
+fi
+
+if [[ "$(td_session_type)" == "wayland" ]]; then
+	warn "Wayland session — Wine's Wayland driver is still unreliable for TouchDesigner"
+	fix "Launch with WAYLAND_DISPLAY=\"\" so Wine uses XWayland (td-launch does this)."
+else
+	ok "X11 session"
+fi
+
+# ================================================================ prefix ====
+
+prefix=""; bottle=""; data=""; runner_name=""; wine=""
+
+if [[ -n "$opt_prefix" ]]; then
+	prefix=$(readlink -f "$opt_prefix")
+	[[ -d "$prefix" ]] || die "no such prefix: $opt_prefix"
+	hdr "Wine prefix"
+	kv "Prefix" "$prefix"
+else
+	hdr "Bottles"
+	if ! data=$(td_bottles_data_dir); then
+		bad "no Bottles installation found"
+		note "looked in ~/.var/app/com.usebottles.bottles/data/bottles and ~/.local/share/bottles"
+		fix "Run td-setup to install Bottles and TouchDesigner, or point td-doctor at an existing prefix with --prefix."
+		data=""
+	else
+		ok "Bottles data directory: $data"
+		bottles=()
+		mapfile -t bottles < <(td_list_bottles "$data")
+		if (( ${#bottles[@]} == 0 )); then
+			bad "no bottles exist yet"
+		else
+			kv "Bottles" "${bottles[*]}"
+		fi
+
+		if [[ -n "$opt_bottle" ]]; then
+			bottle="$opt_bottle"
+			[[ -d "$data/bottles/$bottle" ]] || die "no such bottle: $bottle"
+		else
+			for cand in "${bottles[@]}"; do
+				if td_find_exe "$data/bottles/$cand" >/dev/null; then bottle="$cand"; break; fi
+			done
+		fi
+
+		if [[ -z "$bottle" ]]; then
+			bad "none of these bottles contains TouchDesigner.exe"
+			note "an empty bottle looks identical to a working one in the Bottles UI"
+			fix "Run td-setup to install TouchDesigner into a bottle."
+		else
+			ok "Using bottle: $bottle"
+			prefix="$data/bottles/$bottle"
+			kv "Runner"  "$(td_bottle_get "$prefix/bottle.yml" Runner)"
+			kv "DXVK"    "$(td_bottle_get "$prefix/bottle.yml" DXVK)"
+			kv "VKD3D"   "$(td_bottle_get "$prefix/bottle.yml" VKD3D)"
+			kv "NVAPI"   "$(td_bottle_get "$prefix/bottle.yml" NVAPI)"
+			kv "Arch"    "$(td_bottle_get "$prefix/bottle.yml" Arch)"
+			kv "Windows" "$(td_bottle_get "$prefix/bottle.yml" Windows)"
+
+			runner_name=$(td_bottle_get "$prefix/bottle.yml" Runner)
+			if [[ -n "$runner_name" ]]; then
+				if wine=$(td_find_wine "$data/runners/$runner_name"); then
+					ok "Runner binary: $wine"
+				elif td_runner_is_system "$runner_name"; then
+					warn "bottle uses the system Wine ('$runner_name'), not a downloaded runner"
+					note "inside the Bottles Flatpak that is the sandbox's own Wine, which"
+					note "tools outside the sandbox cannot use; launching falls back to \$PATH"
+					if wine=$(command -v wine); then
+						note "will use: $wine ($(wine --version 2>/dev/null))"
+					else
+						bad "and there is no wine on \$PATH either"
+					fi
+					fix "In Bottles, set this bottle's runner to a downloaded one (e.g. Soda) for a reproducible setup."
+				else
+					bad "runner '$runner_name' has no wine binary under $data/runners"
+					fix "Re-download the runner in Bottles → Preferences → Runners."
+				fi
+			fi
+
+			if [[ "$(td_bottle_get "$prefix/bottle.yml" Arch)" == "win32" ]]; then
+				bad "this bottle is 32-bit — TouchDesigner is 64-bit only"
+				fix "Create a win64 bottle: td-setup --bottle <name>"
+			fi
+		fi
+	fi
+fi
+
+# ========================================================= touchdesigner ====
+
+exe=""
+if [[ -n "$prefix" ]]; then
+	hdr "TouchDesigner"
+	if exe=$(td_find_exe "$prefix"); then
+		bin_dir=$(dirname "$exe")
+		ok "Executable: $exe"
+		kv "Build" "$(td_exe_version "$exe")"
+
+		# ---- mimalloc: the single most common hang on Wine 10 runners --------
+		if [[ -f "$bin_dir/mimalloc-redirect.dll" ]]; then
+			warn "mimalloc-redirect.dll is present"
+			note "it patches malloc for every DLL in the process, including Wine's DWrite,"
+			note "which faults with 0xc0000005 while loading a project and hangs the splash"
+			fix "$FIX_MIMALLOC"
+		else
+			ok "no mimalloc-redirect.dll in this build"
+		fi
+
+		# ---- IDS Peak camera SDK -------------------------------------------
+		patcher="$ROOT/bin/td-patch-ids-peak"
+		ids_present=0; ids_unpatched=0
+		for dll in "${TD_IDS_PEAK_DLLS[@]}"; do
+			[[ -f "$bin_dir/$dll" ]] && ids_present=$((ids_present + 1))
+		done
+		if (( ids_present == 0 )); then
+			ok "no ids_peak DLLs in this build"
+		elif [[ -x "$patcher" ]]; then
+			ids_unpatched=$("$patcher" "$bin_dir" --check 2>/dev/null | grep -c 'NEEDS FIX')
+			if (( ids_unpatched > 0 )); then
+				warn "$ids_unpatched of $ids_present ids_peak DLL(s) still have a live entry point"
+				note "Wine runs their DllMain and TouchDesigner dies during startup"
+				FIX_IDS_PEAK="Run: td-patch-ids-peak '$bin_dir' --apply"
+				fix "$FIX_IDS_PEAK"
+			else
+				ok "all $ids_present ids_peak DLL(s) have a zeroed entry point"
+			fi
+		else
+			warn "$ids_present ids_peak DLL(s) present, cannot check (td-patch-ids-peak missing)"
+		fi
+
+		# ---- UI font fix ----------------------------------------------------
+		tox=$(find "$prefix" -iname 'wine_ui_fixes.tox' -print -quit 2>/dev/null)
+		if [[ -n "$tox" ]]; then
+			ok "UI font fix present: $tox"
+		else
+			warn "wine_ui_fixes.tox not found — the UI will render with the wrong font"
+			note "cosmetic only, TouchDesigner still works"
+			fix "See docs/known-issues.md § Wrong UI font."
+		fi
+	else
+		bad "no TouchDesigner.exe under $prefix/drive_c"
+		fix "Run td-setup to install TouchDesigner into a bottle."
+		exe=""
+	fi
+fi
+
+# =============================================================== launcher ====
+
+hdr "Launcher"
+if [[ -x "$HOME/.local/bin/touchdesigner" ]]; then
+	if grep -q 'MIMALLOC_DISABLE_REDIRECT' "$HOME/.local/bin/touchdesigner" 2>/dev/null; then
+		ok "~/.local/bin/touchdesigner exists and sets MIMALLOC_DISABLE_REDIRECT"
+	else
+		warn "~/.local/bin/touchdesigner exists but does not set MIMALLOC_DISABLE_REDIRECT"
+		fix "Re-run ./install.sh to replace it (your old one is kept as .bak)."
+	fi
+else
+	warn "no ~/.local/bin/touchdesigner launcher installed"
+	fix "Run ./install.sh to get a menu entry and a 'touchdesigner' command."
+fi
+
+case ":$PATH:" in
+	*":$HOME/.local/bin:"*) ok "~/.local/bin is on PATH" ;;
+	*) warn "~/.local/bin is not on PATH"
+	   fix "Add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+esac
+
+# ==================================================================== log ====
+
+if (( want_log )); then
+	[[ -n "$log_file" ]] || log_file="$(td_state_dir)/last-run.log"
+	hdr "Log analysis"
+	kv "Log" "$log_file"
+	if [[ ! -r "$log_file" ]]; then
+		warn "cannot read that log"
+		note "produce one with: td-launch --debug"
+	elif [[ ! -s "$log_file" ]]; then
+		warn "log is empty"
+	else
+		lines=$(wc -l < "$log_file")
+		kv "Lines" "$lines"
+		matched=0
+
+		if grep -q 'c0000005' "$log_file"; then
+			# Look at the frames immediately around the first access violation:
+			# that is where the offending module shows up.
+			window=$(grep -m1 -A 40 'c0000005' "$log_file")
+			if grep -qi 'mimalloc' <<<"$window"; then
+				bad "access violation inside mimalloc — the known mimalloc/DWrite hang"
+				fix "$FIX_MIMALLOC"
+				matched=1
+			elif grep -qi 'ids_peak' <<<"$window"; then
+				bad "access violation inside an ids_peak DLL"
+				fix "$FIX_IDS_PEAK"
+				matched=1
+			elif grep -qiE 'dwrite|gdiplus|freetype' <<<"$window"; then
+				bad "access violation in the font stack"
+				fix "Try MIMALLOC_DISABLE_REDIRECT=1 first, then a newer runner."
+				matched=1
+			else
+				bad "access violation (0xc0000005), module not recognised"
+				note "$(grep -m1 -A 6 'c0000005' "$log_file" | tail -5 | tr -s ' ' | head -3)"
+				fix "Open an issue with this log — it may be a new failure mode."
+				matched=1
+			fi
+		fi
+
+		if grep -qE 'err:module:(import_dll|loader_init).*not found' "$log_file"; then
+			bad "a DLL import could not be resolved"
+			note "$(grep -m1 -E 'err:module:(import_dll|loader_init)' "$log_file")"
+			fix "Install the missing dependency in Bottles (usually vcredist or dotnet)."
+			matched=1
+		fi
+
+		if grep -qiE 'Failed to create (a )?(Vulkan|D3D11) device|no suitable.*(adapter|device)' "$log_file"; then
+			bad "DXVK could not create a device"
+			fix "Check your Vulkan driver, then Bottles → bottle → DXVK version."
+			matched=1
+		fi
+
+		if grep -q 'lsteamclient disabled' "$log_file"; then
+			ok "lsteamclient messages present — harmless, ignore them"
+		fi
+
+		if (( ! matched )); then
+			ok "no known crash signature in this log"
+			note "if TouchDesigner still hangs, re-run with: td-launch --debug"
+		fi
+	fi
+fi
+
+# ================================================================ summary ====
+
+hdr "Summary"
+printf '  %s%d ok%s, %s%d warning(s)%s, %s%d failure(s)%s\n' \
+	"$C_GREEN" "$ok_count" "$C_RESET" \
+	"$C_YELLOW" "$warn_count" "$C_RESET" \
+	"$C_RED" "$fail_count" "$C_RESET"
+
+if (( ${#FIXES[@]} )); then
+	printf '\n%sSuggested actions%s\n' "$C_BOLD" "$C_RESET"
+	i=1
+	for f in "${FIXES[@]}"; do
+		printf '  %d. %s\n' "$i" "$f"
+		i=$((i + 1))
+	done
+fi
+
+if [[ -n "$exe" ]]; then
+	printf '\n%sKnown-good launch for this setup%s\n' "$C_BOLD" "$C_RESET"
+	printf '  td-launch'
+	[[ -n "$bottle" ]] && printf ' --bottle %s' "$bottle"
+	printf '\n'
+fi
+
+(( fail_count )) && exit 1
+(( warn_count )) && exit 0
+exit 0

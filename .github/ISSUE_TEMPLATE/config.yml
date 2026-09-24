@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Installing TouchDesigner on Linux in the first place
+    url: https://github.com/iswad-lab/TouchDesigner-Linux
+    about: This repo debugs an existing install. That project sets one up for you.
+  - name: Derivative forum — TouchDesigner on Linux via Bottles
+    url: https://forum.derivative.ca/t/experimental-setup-touchdesigner-on-linux-via-bottles-2025-10-04/809825
+    about: Community thread for setup questions that are not bugs in these scripts.

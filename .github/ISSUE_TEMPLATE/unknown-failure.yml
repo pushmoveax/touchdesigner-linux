@@ -1,0 +1,39 @@
+name: TouchDesigner fails in a way td-doctor does not recognise
+description: A hang or crash with no matching signature
+title: "[bug] <what happens>"
+labels: ["unknown-failure"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: run `td-launch --debug`, reproduce the failure, then run
+        `td-doctor --log`. If it names a known signature, apply the fix it
+        prints — no issue needed.
+  - type: textarea
+    id: symptom
+    attributes:
+      label: What happens
+      description: Where it stops, what the UI shows, whether the process stays alive.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: td-doctor output
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: exception
+    attributes:
+      label: The first exception and what follows it
+      description: |
+        `grep -n -m1 -A 40 'c0000005' ~/.local/state/td-linux/last-run.log`
+
+        Please do not attach the whole log — a `+seh` log is 30-40 MB and the
+        window around the first fault is what identifies the module.
+      render: text
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you already tried
