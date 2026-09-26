@@ -45,6 +45,7 @@ genuinely useful.
 | General UI, node editing | ✅ | |
 | Heavy operator graphs | ✅ | no stutter reported |
 | UI font | ⚠️ | wrong font, `wine_ui_fixes.tox` not installed yet |
+| Opening a large `.toe` | ❌ | crashes in Wine's DirectWrite, see known-issues |
 | GLSL TOP | ? | untested |
 | Render TOP / 3D | ? | untested |
 | Movie File In TOP | ? | untested |

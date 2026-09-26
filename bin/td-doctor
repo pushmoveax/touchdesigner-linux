@@ -261,9 +261,14 @@ if (( want_log )); then
 				bad "access violation inside an ids_peak DLL"
 				fix "$FIX_IDS_PEAK"
 				matched=1
-			elif grep -qiE 'dwrite|gdiplus|freetype' <<<"$window"; then
+			elif grep -qiE 'dwrite' <<<"$window"; then
+				bad "access violation inside DirectWrite — the unsolved project-load crash"
+				note "trivial projects open, anything substantial does not; see"
+				note "docs/known-issues.md, and a compatibility report would help"
+				matched=1
+			elif grep -qiE 'gdiplus|freetype' <<<"$window"; then
 				bad "access violation in the font stack"
-				fix "Try MIMALLOC_DISABLE_REDIRECT=1 first, then a newer runner."
+				fix "$FIX_MIMALLOC"
 				matched=1
 			else
 				bad "access violation (0xc0000005), module not recognised"
@@ -283,6 +288,12 @@ if (( want_log )); then
 		if grep -qiE 'Failed to create (a )?(Vulkan|D3D11) device|no suitable.*(adapter|device)' "$log_file"; then
 			bad "DXVK could not create a device"
 			fix "Check your Vulkan driver, then Bottles → bottle → DXVK version."
+			matched=1
+		fi
+
+		if ! (( matched )) && grep -q 'dwritefactory3_GetSystemFontCollection' "$log_file"; then
+			bad "DirectWrite font-collection calls and no completed load"
+			note "matches the unsolved project-load crash in docs/known-issues.md"
 			matched=1
 		fi
 

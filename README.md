@@ -151,6 +151,21 @@ why each fix works, and where each one came from.
 [`docs/install.md`](docs/install.md) is the same install done by hand, if you
 would rather not run a script that installs things.
 
+## What does not work yet
+
+Opening a substantial project crashes TouchDesigner inside Wine's DirectWrite.
+Small projects are fine; TouchDesigner's own shipped samples are not, so this is
+not about any particular file. `MIMALLOC_DISABLE_REDIRECT=1` does not cover it —
+it only moves the faulting allocation. Disabling `dwrite`, adding host fonts and
+injecting the community `wine_ui_fixes.tox` were each tried and each changed
+nothing.
+
+`td-doctor --log` names this one when it sees it, and
+[`docs/known-issues.md`](docs/known-issues.md#a-saved-project-never-opens-directwrite--unsolved)
+records the backtrace and everything ruled out. If large projects **do** open on
+your machine, a [compatibility report](../../issues/new?template=compatibility-report.yml)
+is the most useful thing you can send.
+
 ## The commands
 
 | Command | Does |

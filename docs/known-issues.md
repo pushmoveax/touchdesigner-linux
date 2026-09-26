@@ -63,6 +63,76 @@ Do **not** delete `mimalloc.dll`. TouchDesigner links against it.
 
 ---
 
+## A saved project never opens (DirectWrite) — unsolved
+
+**Symptom.** TouchDesigner starts and shows its splash, but a project passed on
+the command line or opened from disk never appears. The splash sits at roughly
+99%, or the process exits without a dialog and you are left with TouchDesigner's
+default startup network instead of your work — which reads as "it opened the
+wrong project".
+
+Trivial projects open fine. This is not about your file: TouchDesigner's own
+shipped samples reproduce it.
+
+| Project | Size | Result |
+| --- | --- | --- |
+| `Samples/Setup/Base/NewProject.toe` | 770 B | opens in ~20 s |
+| `Samples/Setup/Example/NewProject.toe` | 1.8 KB | opens (this is the default startup network) |
+| `Samples/DomeViewer/DomeViewer_LinesDemo.toe` | 122 KB | never opens |
+| a project saved from the UI | 87 KB | never opens |
+
+**Log signature.** At the default log level:
+
+```text
+fixme:dwrite:dwritefactory3_GetSystemFontCollection checking for system font updates not implemented
+err:seh:NtRaiseException Unhandled exception code c0000005 flags 0 addr 0x6ffffff82418
+```
+
+With `td-launch --debug`, the first exception unwinds through DirectWrite:
+
+```text
+Exception 0xc0000005
+  ntdll.dll  + 0x52418
+  ntdll.dll  + 0x267E8
+  DWrite.dll + 0x2B08A
+  DWrite.dll + 0x406C3
+  libTD.dll  + 0x159C81C
+```
+
+**Cause.** `DWrite.dll + 0x406C3` is the same frame that appears in the
+mimalloc/DWrite hang above. `MIMALLOC_DISABLE_REDIRECT=1` does not cure this
+one; it only moves the faulting allocation out of mimalloc and into ntdll's
+heap. The bug is in Wine's DirectWrite, reached from TouchDesigner's own UI
+rendering, and the more interface a project brings with it the more reliably it
+is hit.
+
+**Fix.** None known. What was tried, each on a prefix whose health was confirmed
+by opening the 770 B template immediately afterwards:
+
+| Attempt | Result |
+| --- | --- |
+| `MIMALLOC_DISABLE_REDIRECT=1` | already applied; insufficient |
+| `WINEDLLOVERRIDES=dwrite=d` | worse — startup stops earlier |
+| 72 host fonts copied into the prefix | no change |
+| `wine_ui_fixes.tox` injected via `toeexpand`/`toecollapse` | no change |
+
+The `.tox` injection is worth explaining, because it looks like it should help:
+it switches Text TOPs to the Scalable renderer, which avoids DirectWrite. It
+cannot help here for two reasons. Its script runs from `onStart`, which is after
+the load that crashes, and the sample that reproduces the crash contains no
+Text TOPs at all.
+
+Running the same prefix under a newer Wine was also tried and is **not** listed
+above: the newer Wine upgraded the prefix and broke it outright, so that result
+says nothing. If you have a spare prefix, that experiment is still worth doing
+properly.
+
+If you can open large projects on your machine, please say so in a
+[compatibility report](../../issues/new?template=compatibility-report.yml) —
+knowing which Wine, driver or desktop avoids this is the fastest way to a fix.
+
+---
+
 ## Crash during startup in `ids_peak_*.dll`
 
 **Symptom.** TouchDesigner dies early, often before any window appears.

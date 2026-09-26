@@ -152,6 +152,22 @@ mimalloc/DWrite, падения в `ids_peak`, падения в шрифтов�
 хочется запускать скрипт, который что-то ставит, — в
 [`docs/install.md`](docs/install.md).
 
+## Что пока не работает
+
+Открытие сколько-нибудь большого проекта роняет TouchDesigner внутри
+DirectWrite от Wine. Маленькие проекты открываются, штатные примеры самого
+TouchDesigner — нет, так что дело не в конкретном файле.
+`MIMALLOC_DISABLE_REDIRECT=1` эту проблему не закрывает: он лишь переносит
+падающее выделение памяти. Отключение `dwrite`, установка системных шрифтов в
+prefix и инжекция community-фикса `wine_ui_fixes.tox` проверены — ни одно не
+меняет ничего.
+
+`td-doctor --log` распознаёт это падение, а
+[`docs/known-issues.md`](docs/known-issues.md#a-saved-project-never-opens-directwrite--unsolved)
+содержит backtrace и список проверенного. Если у тебя большие проекты
+**открываются** — самое полезное, что можно прислать, это
+[compatibility report](../../issues/new?template=compatibility-report.yml).
+
 ## Команды
 
 | Команда | Что делает |
