@@ -411,6 +411,7 @@ else
 		fi
 		good "pinned bottle '$bottle' in $config"
 		"$ROOT/install.sh" || warn_msg "install.sh reported a problem"
+		"$ROOT/bin/td-link-home" --bottle "$bottle" || warn_msg "td-link-home reported a problem"
 	fi
 fi
 

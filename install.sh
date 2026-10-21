@@ -7,10 +7,12 @@ BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
 DESKTOP="$APP_DIR/touchdesigner.desktop"
+MIME_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/mime"
+MIME_FILE="$MIME_DIR/packages/touchdesigner.xml"
 
 source "$ROOT/lib/td-common.sh"
 
-TOOLS=(td-setup td-doctor td-launch td-patch-ids-peak)
+TOOLS=(td-setup td-doctor td-launch td-patch-ids-peak td-link-home)
 
 say() { printf '%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 
@@ -50,6 +52,12 @@ uninstall() {
 	fi
 	restore_backup "$DESKTOP"
 	[[ -f "$ICON_DIR/touchdesigner.png" ]] && rm -- "$ICON_DIR/touchdesigner.png"
+	if [[ -f "$MIME_FILE" ]]; then
+		rm -- "$MIME_FILE"
+		command -v update-mime-database >/dev/null 2>&1 \
+			&& update-mime-database "$MIME_DIR" 2>/dev/null || true
+		say "unregistered the .toe/.tox file types"
+	fi
 	command -v update-desktop-database >/dev/null 2>&1 \
 		&& update-desktop-database "$APP_DIR" 2>/dev/null || true
 	say "uninstalled"
@@ -101,6 +109,26 @@ if command -v wrestool >/dev/null 2>&1 && command -v icotool >/dev/null 2>&1; th
 fi
 [[ -n "$icon_line" ]] || icon_line="Icon=application-x-executable"
 
+mkdir -p "$MIME_DIR/packages"
+cat > "$MIME_FILE" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-touchdesigner">
+    <comment>TouchDesigner project</comment>
+    <glob pattern="*.toe"/>
+    <icon name="touchdesigner"/>
+  </mime-type>
+  <mime-type type="application/x-touchdesigner-component">
+    <comment>TouchDesigner component</comment>
+    <glob pattern="*.tox"/>
+    <icon name="touchdesigner"/>
+  </mime-type>
+</mime-info>
+XML
+command -v update-mime-database >/dev/null 2>&1 \
+	&& update-mime-database "$MIME_DIR" 2>/dev/null || true
+say "registered .toe and .tox as TouchDesigner files"
+
 back_up "$DESKTOP"
 cat > "$DESKTOP" <<EOF
 [Desktop Entry]
@@ -115,13 +143,19 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=touchdesigner.exe
 Categories=Graphics;AudioVideo;Development;
-MimeType=application/x-touchdesigner;
+MimeType=application/x-touchdesigner;application/x-touchdesigner-component;
 Keywords=TouchDesigner;TD;toe;wine;
 EOF
 say "wrote $DESKTOP"
 
 command -v update-desktop-database >/dev/null 2>&1 \
 	&& update-desktop-database "$APP_DIR" 2>/dev/null || true
+
+if command -v xdg-mime >/dev/null 2>&1; then
+	xdg-mime default touchdesigner.desktop application/x-touchdesigner 2>/dev/null || true
+	xdg-mime default touchdesigner.desktop application/x-touchdesigner-component 2>/dev/null || true
+	say "double-clicking a .toe in your file manager now opens TouchDesigner"
+fi
 
 case ":$PATH:" in
 	*":$BIN_DIR:"*) ;;
@@ -134,6 +168,7 @@ cat <<EOF
 Installed. Next:
 
   td-setup           install TouchDesigner from scratch (try --dry-run first)
+  td-link-home       point the bottle's folders at your real ones
   td-doctor          check this machine and print what still needs fixing
   touchdesigner      start TouchDesigner with the working environment
   td-doctor --log    explain the last run if it crashed

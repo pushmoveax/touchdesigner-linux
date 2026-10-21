@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+ROOT=$(dirname "$(dirname "$SELF")")
+source "$ROOT/lib/td-common.sh"
+
+usage() {
+	cat <<EOF
+Usage: td-link-home [options]
+
+Points the bottle's Desktop, Downloads, Documents, Pictures, Videos and Music
+at your real folders, and adds an H: drive for your home directory, so
+TouchDesigner's file dialog reaches your files without walking down
+C: -> users -> <name>.
+
+A folder that already holds something is left alone.
+
+Options:
+  -b, --bottle NAME   bottle to fix (default: the one with TouchDesigner)
+  -p, --prefix DIR    Wine prefix to fix
+      --undo          restore empty folders and drop the H: drive
+  -n, --dry-run       print what would change
+  -h, --help          this text
+EOF
+}
+
+opt_bottle=""; opt_prefix=""; undo=0; dry_run=0
+while (( $# )); do
+	case "$1" in
+		-b|--bottle) opt_bottle="${2:?}"; shift 2 ;;
+		-p|--prefix) opt_prefix="${2:?}"; shift 2 ;;
+		--undo)      undo=1; shift ;;
+		-n|--dry-run) dry_run=1; shift ;;
+		-h|--help)   usage; exit 0 ;;
+		--version)   printf 'td-link-home %s\n' "$TD_VERSION"; exit 0 ;;
+		*)           die "unknown option: $1" ;;
+	esac
+done
+
+prefix="$opt_prefix"
+if [[ -z "$prefix" ]]; then
+	data=$(td_bottles_data_dir) || die "no Bottles installation found; use --prefix"
+	bottle="$opt_bottle"
+	if [[ -z "$bottle" ]]; then
+		while read -r cand; do
+			[[ -n "$cand" ]] || continue
+			td_find_exe "$data/bottles/$cand" >/dev/null && { bottle="$cand"; break; }
+		done < <(td_list_bottles "$data")
+	fi
+	[[ -n "$bottle" ]] || die "no bottle contains TouchDesigner; use --prefix"
+	prefix="$data/bottles/$bottle"
+fi
+[[ -d "$prefix/drive_c" ]] || die "not a Wine prefix: $prefix"
+
+users_dir="$prefix/drive_c/users"
+user=$(find "$users_dir" -mindepth 1 -maxdepth 1 -type d ! -name 'Public' -printf '%f\n' 2>/dev/null | head -1)
+[[ -n "$user" ]] || die "no user folder under $users_dir"
+home_in_bottle="$users_dir/$user"
+
+act() {
+	if (( dry_run )); then
+		printf '  %swould:%s %s\n' "$C_DIM" "$C_RESET" "$*"
+	else
+		"$@"
+	fi
+}
+
+printf '%sPrefix%s %s\n' "$C_BOLD" "$C_RESET" "$(td_tilde "$prefix")"
+
+for pair in Desktop:DESKTOP Downloads:DOWNLOAD Documents:DOCUMENTS \
+            Pictures:PICTURES Videos:VIDEOS Music:MUSIC; do
+	name="${pair%%:*}"; key="${pair##*:}"
+	win="$home_in_bottle/$name"
+	host=$(xdg-user-dir "$key" 2>/dev/null)
+
+	if (( undo )); then
+		if [[ -L "$win" ]]; then
+			act rm -f -- "$win"
+			act mkdir -p -- "$win"
+			printf '  %s restored as an empty folder\n' "$name"
+		fi
+		continue
+	fi
+
+	if [[ -L "$win" ]]; then
+		printf '  %-10s already linked to %s\n' "$name" "$(td_tilde "$(readlink "$win")")"
+		continue
+	fi
+	if [[ -z "$host" || ! -d "$host" || "$host" == "$HOME" ]]; then
+		printf '  %-10s %sno matching folder on this system%s\n' "$name" "$C_DIM" "$C_RESET"
+		continue
+	fi
+	if [[ -d "$win" && -n "$(ls -A "$win" 2>/dev/null)" ]]; then
+		printf '  %-10s %sholds files already, left alone%s\n' "$name" "$C_YELLOW" "$C_RESET"
+		continue
+	fi
+	act rmdir -- "$win" 2>/dev/null
+	act ln -s -- "$host" "$win"
+	printf '  %-10s %s->%s %s\n' "$name" "$C_GREEN" "$C_RESET" "$(td_tilde "$host")"
+done
+
+drive="$prefix/dosdevices/h:"
+if (( undo )); then
+	[[ -L "$drive" ]] && { act rm -f -- "$drive"; printf '  H: drive removed\n'; }
+else
+	if [[ -L "$drive" ]]; then
+		printf '  H: already points at %s\n' "$(td_tilde "$(readlink "$drive")")"
+	else
+		act ln -sfn -- "$HOME" "$drive"
+		printf '  %-10s %s->%s %s\n' "H: drive" "$C_GREEN" "$C_RESET" "$(td_tilde "$HOME")"
+	fi
+fi
+
+(( dry_run )) || printf '\nRestart TouchDesigner for the file dialog to pick this up.\n'

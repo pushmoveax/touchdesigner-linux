@@ -63,23 +63,31 @@ Do **not** delete `mimalloc.dll`. TouchDesigner links against it.
 
 ---
 
-## A saved project never opens (DirectWrite) — unsolved
+## A project with any nested operator never opens (DirectWrite) — unsolved
 
-**Symptom.** TouchDesigner starts and shows its splash, but a project passed on
-the command line or opened from disk never appears. The splash sits at roughly
-99%, or the process exits without a dialog and you are left with TouchDesigner's
-default startup network instead of your work — which reads as "it opened the
-wrong project".
+**Symptom.** TouchDesigner starts and shows its splash, but the project never
+appears. The splash sits near 99%, or the process exits without a dialog and
+you are left with TouchDesigner's default startup network, which reads as "it
+opened the wrong project".
 
-Trivial projects open fine. This is not about your file: TouchDesigner's own
-shipped samples reproduce it.
+**Minimal reproduction.** Narrowed with `toeexpand`/`toecollapse`, each result
+confirmed three times out of three:
 
 | Project | Size | Result |
 | --- | --- | --- |
-| `Samples/Setup/Base/NewProject.toe` | 770 B | opens in ~20 s |
-| `Samples/Setup/Example/NewProject.toe` | 1.8 KB | opens (this is the default startup network) |
+| `Samples/Setup/Base/NewProject.toe` | 770 B | opens in 20 s |
+| the same file, expanded and collapsed again with no edits | 770 B | opens in 20 s |
+| the same file plus **one** nested operator (a `COMP:time`) | 858 B | never opens |
 | `Samples/DomeViewer/DomeViewer_LinesDemo.toe` | 122 KB | never opens |
 | a project saved from the UI | 87 KB | never opens |
+
+So it is not about size, not about your file, and not about any particular
+operator: a project is loadable only while it contains no operator nested
+inside a COMP. Operators created interactively after startup are fine, which is
+why TouchDesigner otherwise feels healthy.
+
+The round-trip row matters: it shows the expand/collapse tooling is not what
+breaks the file.
 
 **Log signature.** At the default log level:
 
@@ -99,37 +107,69 @@ Exception 0xc0000005
   libTD.dll  + 0x159C81C
 ```
 
-**Cause.** `DWrite.dll + 0x406C3` is the same frame that appears in the
-mimalloc/DWrite hang above. `MIMALLOC_DISABLE_REDIRECT=1` does not cure this
-one; it only moves the faulting allocation out of mimalloc and into ntdll's
-heap. The bug is in Wine's DirectWrite, reached from TouchDesigner's own UI
-rendering, and the more interface a project brings with it the more reliably it
-is hit.
+`DWrite.dll + 0x406C3` is the same frame as the mimalloc/DWrite hang above.
+`MIMALLOC_DISABLE_REDIRECT=1` does not cure this one; it only moves the
+faulting allocation out of mimalloc and into ntdll's heap.
 
-**Fix.** None known. What was tried, each on a prefix whose health was confirmed
-by opening the 770 B template immediately afterwards:
+**Fix.** None known. Tried, each with the 770 B template opened straight
+afterwards to prove the prefix was still healthy:
 
 | Attempt | Result |
 | --- | --- |
 | `MIMALLOC_DISABLE_REDIRECT=1` | already applied; insufficient |
 | `WINEDLLOVERRIDES=dwrite=d` | worse — startup stops earlier |
+| `WINEDLLOVERRIDES=d2d1=d`, and together with `dwrite=d` | no change |
+| wined3d instead of DXVK (confirmed in the log) | no change |
+| Windows 7 mode | no change |
+| Wine 9.22 Staging, in its own prefix | no change |
 | 72 host fonts copied into the prefix | no change |
 | `wine_ui_fixes.tox` injected via `toeexpand`/`toecollapse` | no change |
+| a newer Wine's `dwrite.dll` as native | breaks the template too, so inconclusive |
+| Wine 11.9 Staging | cannot run TouchDesigner at all here, so inconclusive |
 
 The `.tox` injection is worth explaining, because it looks like it should help:
-it switches Text TOPs to the Scalable renderer, which avoids DirectWrite. It
-cannot help here for two reasons. Its script runs from `onStart`, which is after
-the load that crashes, and the sample that reproduces the crash contains no
-Text TOPs at all.
+it switches Text TOPs to the Scalable renderer, which avoids DirectWrite. Its
+script runs from `onStart`, which is after the load that crashes.
 
-Running the same prefix under a newer Wine was also tried and is **not** listed
-above: the newer Wine upgraded the prefix and broke it outright, so that result
-says nothing. If you have a spare prefix, that experiment is still worth doing
-properly.
+**Measure from inside the bottle.** Results taken by opening a `.toe` from a
+host path were not reproducible; the same file would open once and not the next
+time. Everything above was measured with the file on the bottle's `C:` drive,
+where the signal repeats exactly. If you are testing this yourself, copy the
+project into `drive_c` first, or you will chase noise.
 
-If you can open large projects on your machine, please say so in a
+If large projects open on your machine, please say so in a
 [compatibility report](../../issues/new?template=compatibility-report.yml) —
 knowing which Wine, driver or desktop avoids this is the fastest way to a fix.
+
+---
+
+## The file dialog is Wine's, not your desktop's
+
+**Symptom.** TouchDesigner's Open/Save dialog is Wine's reimplementation of the
+Windows one: no thumbnails, no places sidebar you recognise, and your files sit
+behind `C:` → `users` → `<name>` or a walk down `Z:`.
+
+**Cause.** Wine implements the Windows common dialog itself. Handing the job to
+the desktop through `xdg-desktop-portal` exists only as an unmerged patch
+series ([Wine bug 51134](https://bugs.winehq.org/show_bug.cgi?id=51134)), so
+there is nothing to switch on.
+
+**What helps.**
+
+```sh
+td-link-home
+```
+
+points the bottle's `Desktop`, `Downloads`, `Documents`, `Pictures`, `Videos`
+and `Music` at your real folders and adds an `H:` drive for your home
+directory, so the dialog's shortcuts and drive list land where your files
+actually are. A folder that already holds something is left alone, and `--undo`
+reverses it.
+
+Better still, avoid the dialog: `install.sh` registers `.toe` and `.tox` as file
+types and makes TouchDesigner their default application, so you can browse in
+Dolphin, Nautilus or Thunar — with previews — and open a project by
+double-clicking it.
 
 ---
 

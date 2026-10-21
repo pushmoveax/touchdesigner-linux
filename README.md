@@ -153,9 +153,10 @@ would rather not run a script that installs things.
 
 ## What does not work yet
 
-Opening a substantial project crashes TouchDesigner inside Wine's DirectWrite.
-Small projects are fine; TouchDesigner's own shipped samples are not, so this is
-not about any particular file. `MIMALLOC_DISABLE_REDIRECT=1` does not cover it —
+Opening a project crashes TouchDesigner inside Wine's DirectWrite as soon as it
+contains a single operator nested inside a COMP — narrowed to a 858-byte
+reproduction, three runs out of three. Operators created interactively are
+fine, which is why TouchDesigner otherwise feels healthy. `MIMALLOC_DISABLE_REDIRECT=1` does not cover it —
 it only moves the faulting allocation. Disabling `dwrite`, adding host fonts and
 injecting the community `wine_ui_fixes.tox` were each tried and each changed
 nothing.
@@ -175,11 +176,15 @@ is the most useful thing you can send.
 | `td-doctor --log [FILE]` | Matches a Wine log against known crash signatures. |
 | `td-launch` | Starts TouchDesigner with the working environment. Every fix can be disabled individually to bisect a setup. |
 | `td-patch-ids-peak` | Zeroes `AddressOfEntryPoint` in the IDS Peak DLLs, with backups and `--restore`. |
+| `td-link-home` | Points the bottle's Desktop, Downloads and the rest at your real folders, and adds an `H:` drive, so the file dialog reaches your files. `--undo` reverses it. |
 | `install.sh` | Puts the above on `PATH`, adds the desktop entry. `--uninstall` reverses it. |
 
 `install.sh` symlinks into `~/.local/bin`, so keep the clone where it is (or
 re-run it after moving). It never overwrites a file you wrote yourself —
-anything in the way is kept as `.bak`.
+anything in the way is kept as `.bak`. It also registers `.toe` and `.tox` as
+file types and makes TouchDesigner their default application, so you can browse
+in your own file manager, with previews, and open a project by double-clicking
+it instead of fighting Wine's file dialog.
 
 Requirements: `bash`, `python3`, `curl`, `tar`, `flatpak`. Optional:
 `vulkan-tools` so the doctor can verify Vulkan, `icoutils` so the installer can
