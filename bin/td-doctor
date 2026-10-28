@@ -155,6 +155,18 @@ else
 					bad "runner '$runner_name' has no wine binary under $data/runners"
 					fix "Re-download the runner in Bottles → Preferences → Runners."
 				fi
+
+				case "$runner_name" in
+					soda-1[0-9].*|wine-1[0-9].*|*[Pp]roton1[0-9]*)
+						warn "runner '$runner_name' is Wine 10 or newer"
+						note "real projects stop at 99% on the splash and never open --"
+						note "Wine's DirectWrite corrupts the heap while TouchDesigner"
+						note "draws interface text during the load"
+						fix "Install soda-9.0-1 into $data/runners and set it as this bottle's runner:
+  https://github.com/bottlesdevs/wine/releases/tag/soda-9.0-1
+  Background: docs/known-issues.md"
+						;;
+				esac
 			fi
 
 			if [[ "$(td_bottle_get "$prefix/bottle.yml" Arch)" == "win32" ]]; then

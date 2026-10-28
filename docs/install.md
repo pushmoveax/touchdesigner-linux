@@ -43,9 +43,9 @@ mkdir -p "$data/runners" "$data/dxvk"
 # Soda runner (Bottles' Wine build). Note the directory is named after the tag,
 # not after the tarball's own top-level directory.
 curl -fL -o /tmp/soda.tar.xz \
-  https://github.com/bottlesdevs/wine/releases/download/soda-11.0-10/soda-11.0-10-x86_64.tar.xz
+  https://github.com/bottlesdevs/wine/releases/download/soda-9.0-1/soda-9.0-1-x86_64.tar.xz
 tar -xf /tmp/soda.tar.xz -C /tmp
-mv /tmp/soda-11.0-10-x86_64 "$data/runners/soda-11.0-10"
+mv /tmp/soda-9.0-1-x86_64 "$data/runners/soda-9.0-1"
 
 # DXVK
 curl -fL -o /tmp/dxvk.tar.gz \
@@ -53,10 +53,12 @@ curl -fL -o /tmp/dxvk.tar.gz \
 tar -xf /tmp/dxvk.tar.gz -C "$data/dxvk"
 ```
 
-Check the current versions at
-[bottlesdevs/wine](https://github.com/bottlesdevs/wine/releases) and
-[doitsujin/dxvk](https://github.com/doitsujin/dxvk/releases). Soda 11 is
-Wine 10-based, which is also exactly why the mimalloc fix in step 6 is needed.
+Do **not** take the newest Soda here. Soda 10 and 11 start TouchDesigner but
+cannot open a real project: the splash stops at 99% and the process deadlocks.
+Soda 9 is the version that works — see
+[known-issues.md](known-issues.md#a-real-project-never-opens-wine-11-runners).
+Check DXVK's current version at
+[doitsujin/dxvk](https://github.com/doitsujin/dxvk/releases).
 
 ## 3. A bottle
 
@@ -65,7 +67,7 @@ flatpak run --command=bottles-cli com.usebottles.bottles new \
   --bottle-name touchdesigner \
   --environment gaming \
   --arch win64 \
-  --runner soda-11.0-10 \
+  --runner soda-9.0-1 \
   --dxvk dxvk-3.1
 ```
 
@@ -76,7 +78,7 @@ From now on:
 
 ```sh
 prefix="$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles/touchdesigner"
-wine="$HOME/.var/app/com.usebottles.bottles/data/bottles/runners/soda-11.0-10/bin/wine"
+wine="$HOME/.var/app/com.usebottles.bottles/data/bottles/runners/soda-9.0-1/bin/wine"
 ```
 
 The runner works from outside the Flatpak sandbox, which is what makes the rest

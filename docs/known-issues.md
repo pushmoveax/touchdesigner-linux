@@ -63,83 +63,107 @@ Do **not** delete `mimalloc.dll`. TouchDesigner links against it.
 
 ---
 
-## A project with any nested operator never opens (DirectWrite) — unsolved
+## A real project never opens (Wine 11 runners)
 
-**Symptom.** TouchDesigner starts and shows its splash, but the project never
-appears. The splash sits near 99%, or the process exits without a dialog and
-you are left with TouchDesigner's default startup network, which reads as "it
-opened the wrong project".
+**Symptom.** TouchDesigner starts, the splash screen reaches **99%** with your
+project's name on it, and stops there. No error, no dialog. The process stays
+alive but uses **no CPU at all** — every thread is parked. Waiting does not help;
+it is a deadlock, not slow loading.
 
-**Minimal reproduction.** Narrowed with `toeexpand`/`toecollapse`, each result
-confirmed three times out of three:
+An empty or near-empty project still opens normally, which makes it look like
+TouchDesigner is healthy and your file is broken. It is not.
+
+**Measured on `soda-11.0-10`,** launched with `MIMALLOC_DISABLE_REDIRECT=1`:
 
 | Project | Size | Result |
 | --- | --- | --- |
 | `Samples/Setup/Base/NewProject.toe` | 770 B | opens in 20 s |
-| the same file, expanded and collapsed again with no edits | 770 B | opens in 20 s |
-| the same file plus **one** nested operator (a `COMP:time`) | 858 B | never opens |
-| `Samples/DomeViewer/DomeViewer_LinesDemo.toe` | 122 KB | never opens |
-| a project saved from the UI | 87 KB | never opens |
+| `Samples/Setup/Example/NewProject.toe` | 1 858 B | opens in 20 s |
+| a project saved from the UI | 87 KB | 99%, deadlocked |
+| a real community project | 120 KB | 99%, deadlocked |
+| `Samples/DomeViewer/DomeViewer_LinesDemo.toe` | 122 KB | exits without a dialog |
 
-So it is not about size, not about your file, and not about any particular
-operator: a project is loadable only while it contains no operator nested
-inside a COMP. Operators created interactively after startup are fine, which is
-why TouchDesigner otherwise feels healthy.
+**Cause.** Wine 11's DirectWrite corrupts the process heap while TouchDesigner
+rasterises interface text during the load. The damage surfaces either as a
+deadlock on an allocator lock, or as a crash the next time that heap is touched.
 
-The round-trip row matters: it shows the expand/collapse tooling is not what
-breaks the file.
-
-**Log signature.** At the default log level:
-
-```text
-fixme:dwrite:dwritefactory3_GetSystemFontCollection checking for system font updates not implemented
-err:seh:NtRaiseException Unhandled exception code c0000005 flags 0 addr 0x6ffffff82418
-```
-
-With `td-launch --debug`, the first exception unwinds through DirectWrite:
+With `WINEDEBUG=+seh` the crash form appears instead of the hang, and the
+backtrace is explicit:
 
 ```text
 Exception 0xc0000005
-  ntdll.dll  + 0x52418
-  ntdll.dll  + 0x267E8
-  DWrite.dll + 0x2B08A
-  DWrite.dll + 0x406C3
+  ntdll.dll  + 0x52418      <- RtlFreeHeap + 0x2A8
+  ntdll.dll  + 0x267E8      <- RtlFreeHeap
+  DWrite.dll + 0x2B08A      <- glyphrunanalysis_CreateAlphaTexture
+  DWrite.dll + 0x406C3      <- rendertarget_DrawGlyphRun
   libTD.dll  + 0x159C81C
 ```
 
-`DWrite.dll + 0x406C3` is the same frame as the mimalloc/DWrite hang above.
-`MIMALLOC_DISABLE_REDIRECT=1` does not cure this one; it only moves the
-faulting allocation out of mimalloc and into ntdll's heap.
+The faulting instruction is `testb $0x1, 0x7(%rax)` — the heap walking a block
+header while freeing. `rax` is the block pointer plus a block size of `0xFF140`,
+roughly a megabyte, which puts the "next block" outside the committed segment.
+The size field had been overwritten: a buffer overflow earlier in DirectWrite's
+glyph rasterisation, not a bad pointer at the free site.
 
-**Fix.** None known. Tried, each with the 770 B template opened straight
-afterwards to prove the prefix was still healthy:
+`MIMALLOC_DISABLE_REDIRECT=1` does not cure this. It only decides *which*
+allocator dies — with the redirect on, the same backtrace ends in
+`mimalloc.dll + 0x2693` instead of `RtlFreeHeap`.
+
+**Fix.** Use a Wine 9 runner. On the Bottles runner `soda-9.0-1` the same
+projects open on the same prefix:
+
+| Project | `soda-11.0-10` | `soda-9.0-1` |
+| --- | --- | --- |
+| 770 B template | opens, 20 s | opens |
+| 87 KB saved project | 99%, deadlocked | opens |
+| 120 KB community project | 99%, deadlocked | opens in 70 s |
+
+Install it from
+[bottlesdevs/wine](https://github.com/bottlesdevs/wine/releases/tag/soda-9.0-1)
+into `~/.var/app/com.usebottles.bottles/data/bottles/runners/`, then set
+`Runner: soda-9.0-1` in the bottle — in the Bottles UI, or in `bottle.yml`.
+`td-setup` installs this runner; `td-doctor` warns when a bottle is on a Wine 11
+runner.
+
+**One wrinkle when you switch.** The first launch after a runner change runs
+`wineboot --init`, whose 32-bit `wine.inf` step (`rundll32 ... Wow64Install`)
+hangs under `soda-9.0-1` and sits at 0% CPU forever. The 64-bit side of the
+prefix is already updated by then and `.update-timestamp` has been written, so
+it does not repeat. Kill the stuck `wineboot.exe` and `rundll32.exe`, and launch
+TouchDesigner normally.
+
+**If you are testing this yourself**, do not use `WINEDEBUG=+seh`. The tracing
+changes the timing enough to turn the deadlock into the heap crash, which makes
+runs look inconsistent and sent an earlier version of this page chasing the
+wrong cause. Measure at the default log level and judge by whether the main
+window appears.
+
+Ruled out along the way, each with a control run afterwards to prove the prefix
+was still healthy:
 
 | Attempt | Result |
 | --- | --- |
-| `MIMALLOC_DISABLE_REDIRECT=1` | already applied; insufficient |
+| `MIMALLOC_DISABLE_REDIRECT=1`, both on and off | no change |
 | `WINEDLLOVERRIDES=dwrite=d` | worse — startup stops earlier |
-| `WINEDLLOVERRIDES=d2d1=d`, and together with `dwrite=d` | no change |
+| `WINEDLLOVERRIDES=d2d1=d` | no change |
 | wined3d instead of DXVK (confirmed in the log) | no change |
 | Windows 7 mode | no change |
-| Wine 9.22 Staging, in its own prefix | no change |
-| 72 host fonts copied into the prefix | no change |
+| `taskset` to one and two cores | no change |
+| every host font hidden, via `FONTCONFIG_FILE` and the prefix registry | no change |
 | `wine_ui_fixes.tox` injected via `toeexpand`/`toecollapse` | no change |
-| a newer Wine's `dwrite.dll` as native | breaks the template too, so inconclusive |
+| Wine 9.22 Staging, in its own prefix | no change — a different build from `soda-9.0-1` |
 | Wine 11.9 Staging | cannot run TouchDesigner at all here, so inconclusive |
 
 The `.tox` injection is worth explaining, because it looks like it should help:
 it switches Text TOPs to the Scalable renderer, which avoids DirectWrite. Its
-script runs from `onStart`, which is after the load that crashes.
+script runs from `onStart`, which is after the load that fails.
 
-**Measure from inside the bottle.** Results taken by opening a `.toe` from a
-host path were not reproducible; the same file would open once and not the next
-time. Everything above was measured with the file on the bottle's `C:` drive,
-where the signal repeats exactly. If you are testing this yourself, copy the
-project into `drive_c` first, or you will chase noise.
-
-If large projects open on your machine, please say so in a
-[compatibility report](../../issues/new?template=compatibility-report.yml) —
-knowing which Wine, driver or desktop avoids this is the fastest way to a fix.
+[iswad-lab/TouchDesigner-Linux](https://github.com/iswad-lab/TouchDesigner-Linux)
+reports the same thing independently — Soda 11 "freezes during project load" —
+and points at
+[DAW-GE-Proton11-6c](https://github.com/KitsuneDev/daw-proton-ge) as a Wine 11
+build carrying a DirectWrite glyph-bitmap-cache patch, for anyone who needs
+Wine 11 for other reasons.
 
 ---
 
@@ -241,8 +265,17 @@ disables it.
 **Symptom.** TouchDesigner works, but the interface font is not TouchDesigner's
 own — wrong metrics, clipped labels, misaligned parameter names.
 
+**Log signature.** TouchDesigner's Textport says so on every start:
+
+```text
+Error Loading Default Mono Font. Failed to load font file. Failed to load .
+  Substituted with Times New Roman.
+Error Loading Default Font. Failed to load font file. Failed to load .
+  Substituted with Times New Roman.
+```
+
 **Cause.** Wine's font substitution does not pick the fonts TouchDesigner
-expects.
+expects, so it falls back to Times New Roman for the whole interface.
 
 **Fix.** The community ships a `wine_ui_fixes.tox` that corrects UI font
 rendering from inside TouchDesigner. Get it from

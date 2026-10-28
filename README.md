@@ -151,21 +151,27 @@ why each fix works, and where each one came from.
 [`docs/install.md`](docs/install.md) is the same install done by hand, if you
 would rather not run a script that installs things.
 
-## What does not work yet
+## The runner matters
 
-Opening a project crashes TouchDesigner inside Wine's DirectWrite as soon as it
-contains a single operator nested inside a COMP — narrowed to a 858-byte
-reproduction, three runs out of three. Operators created interactively are
-fine, which is why TouchDesigner otherwise feels healthy. `MIMALLOC_DISABLE_REDIRECT=1` does not cover it —
-it only moves the faulting allocation. Disabling `dwrite`, adding host fonts and
-injecting the community `wine_ui_fixes.tox` were each tried and each changed
-nothing.
+TouchDesigner opens an empty project on any runner, but **a real project never
+opens on Wine 10 or newer**: the splash screen reaches 99% and stops there, with
+the process alive and using no CPU at all. Wine's DirectWrite corrupts the heap
+while TouchDesigner draws interface text during the load, so the loader
+deadlocks on an allocator lock — or crashes, if the timing falls the other way.
 
-`td-doctor --log` names this one when it sees it, and
-[`docs/known-issues.md`](docs/known-issues.md#a-saved-project-never-opens-directwrite--unsolved)
-records the backtrace and everything ruled out. If large projects **do** open on
-your machine, a [compatibility report](../../issues/new?template=compatibility-report.yml)
-is the most useful thing you can send.
+Use a Wine 9 runner. On the same prefix, same project, same machine:
+
+| Project | `soda-11.0-10` | `soda-9.0-1` |
+| --- | --- | --- |
+| 770 B template | opens, 20 s | opens |
+| 87 KB saved project | 99%, deadlocked | opens |
+| 120 KB community project | 99%, deadlocked | opens in 70 s |
+
+`td-setup` installs `soda-9.0-1`, and `td-doctor` warns when a bottle is on a
+Wine 11 runner. To switch an existing bottle by hand, drop the runner into
+`~/.var/app/com.usebottles.bottles/data/bottles/runners/` and select it in
+Bottles. [`docs/known-issues.md`](docs/known-issues.md#a-real-project-never-opens-wine-11-runners)
+has the backtrace, the heap analysis and everything that was ruled out.
 
 ## The commands
 

@@ -13,6 +13,7 @@ DOWNLOAD_BASE="https://download.derivative.ca"
 DEFAULT_BUILD="2025.33070"
 
 SODA_REPO="bottlesdevs/wine"
+SODA_TAG="soda-9.0-1"
 DXVK_REPO="doitsujin/dxvk"
 
 MIN_FREE_GB=16
@@ -47,8 +48,8 @@ Options:
   -i, --installer PATH  use a TouchDesigner .exe you already have
       --dir PATH        install directory inside the bottle
                         (default: $DEFAULT_WIN_DIR)
-      --runner NAME     Wine runner to use (default: newest Soda available,
-                        downloaded if you have none)
+      --runner NAME     Wine runner to use (default: a Soda 9 runner, downloaded
+                        if you have none — Wine 10+ cannot open real projects)
       --delete-installer
                         remove the downloaded .exe when finished
                         (kept by default: it is 2.8 GB to fetch again)
@@ -226,17 +227,20 @@ if [[ -n "$runner_opt" ]]; then
 	runner="$runner_opt"
 	[[ -d "$data/runners/$runner" ]] || die "no such runner: $data/runners/$runner"
 	good "using $runner"
+	case "$runner" in
+		soda-1[0-9].*|wine-1[0-9].*|*[Pp]roton1[0-9]*)
+			warn_msg "$runner is Wine 10 or newer: real projects stop at 99% on the splash"
+			warn_msg "see docs/known-issues.md; $SODA_TAG is the runner that works"
+			;;
+	esac
 else
-	runner=$(find "$data/runners" -mindepth 1 -maxdepth 1 -type d -name 'soda-*' \
-		-printf '%f\n' 2>/dev/null | sort -V | tail -1)
-	[[ -n "$runner" ]] || runner=$(find "$data/runners" -mindepth 1 -maxdepth 1 -type d \
+	runner=$(find "$data/runners" -mindepth 1 -maxdepth 1 -type d -name 'soda-9.*' \
 		-printf '%f\n' 2>/dev/null | sort -V | tail -1)
 	if [[ -n "$runner" ]]; then
 		good "using existing runner: $runner"
 	else
-		say "no runner installed yet, fetching the latest Soda"
-		tag=$(gh_latest_tag "$SODA_REPO")
-		[[ -n "$tag" ]] || die "cannot resolve the latest Soda release from GitHub"
+		say "no Wine 9 runner installed yet, fetching $SODA_TAG"
+		tag="$SODA_TAG"
 		asset="$tag-x86_64.tar.xz"
 		url="https://github.com/$SODA_REPO/releases/download/$tag/$asset"
 		url_exists "$url" || die "no Soda build at $url

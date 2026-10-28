@@ -16,17 +16,21 @@ useful answer and a wrong `✅` wastes someone's evening.
 | Desktop | KDE Plasma, Wayland session |
 | GPU | NVIDIA GeForce RTX 2080 Ti |
 | Driver | 595.71.05 |
-| Wine | Bottles (Flatpak), runner `soda-11.0-10` |
+| Wine | Bottles (Flatpak), runner `soda-9.0-1` (`soda-11.0-10` cannot open projects) |
 | DXVK | 3.1 |
 | VKD3D | vkd3d-proton 3.0.1 |
 | NVAPI | dxvk-nvapi 0.9.2 (disabled) |
 | Bottle arch | win64, Windows 10 |
 | TouchDesigner | 2025.33070 |
-| Fixes needed | `MIMALLOC_DISABLE_REDIRECT=1`, IDS Peak entry points zeroed, `WAYLAND_DISPLAY=""`, `__GL_YIELD=USLEEP` |
+| Fixes needed | Wine 9 runner, `MIMALLOC_DISABLE_REDIRECT=1`, IDS Peak entry points zeroed, `WAYLAND_DISPLAY=""`, `__GL_YIELD=USLEEP` |
 
 Without `MIMALLOC_DISABLE_REDIRECT=1` this configuration hangs on the splash
 screen every time. With it, TouchDesigner reaches its main window in about
 20 seconds.
+
+The runner was `soda-11.0-10` until a 120 KB community project was traced to a
+deadlock at 99% of the load. On `soda-9.0-1` the same project opens in 70 s and
+runs at 60 FPS. Both runners were measured on the same prefix.
 
 **What `td-setup` has and has not been through on this machine.** Steps 1-5 ran
 for real: prerequisites, bottle creation via `bottles-cli`, runner and DXVK
@@ -45,7 +49,7 @@ genuinely useful.
 | General UI, node editing | ✅ | |
 | Heavy operator graphs | ✅ | no stutter reported |
 | UI font | ⚠️ | wrong font, `wine_ui_fixes.tox` not installed yet |
-| Opening a large `.toe` | ❌ | crashes in Wine's DirectWrite, see known-issues |
+| Opening a large `.toe` | ✅ | on `soda-9.0-1`; deadlocks at 99% on `soda-11.0-10` |
 | GLSL TOP | ? | untested |
 | Render TOP / 3D | ? | untested |
 | Movie File In TOP | ? | untested |
